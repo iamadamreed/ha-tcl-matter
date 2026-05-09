@@ -80,10 +80,10 @@ def patch_platform_forwarding() -> Generator[None]:
 async def test_setup_entry_happy_path(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    patch_platform_forwarding: object,
+    patch_first_refresh: object,
 ) -> None:
     """One TCL node loads successfully and runtime_data is populated."""
     assert await async_setup_entry(hass, mock_tcl_entry) is True
@@ -106,11 +106,11 @@ async def test_setup_entry_matter_not_loaded(
 async def test_setup_entry_no_tcl_nodes_logs_warning(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
     caplog: pytest.LogCaptureFixture,
-    patch_platform_forwarding: object,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    patch_platform_forwarding: object,
+    patch_first_refresh: object,
 ) -> None:
     """No TCL devices on fabric still results in a successful (empty) setup."""
     mock_matter_client.get_nodes.return_value = []
@@ -126,12 +126,12 @@ async def test_setup_entry_no_tcl_nodes_logs_warning(
 async def test_setup_entry_ignores_non_tcl_nodes(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
     mock_matter_node: MagicMock,
     non_tcl_matter_node: MagicMock,
-    patch_platform_forwarding: object,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    patch_platform_forwarding: object,
+    patch_first_refresh: object,
 ) -> None:
     """Nodes from other vendors are filtered out."""
     mock_matter_client.get_nodes.return_value = [mock_matter_node, non_tcl_matter_node]
@@ -143,10 +143,10 @@ async def test_setup_entry_ignores_non_tcl_nodes(
 async def test_unload_entry_clears_subscriptions(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    patch_platform_forwarding: object,
+    patch_first_refresh: object,
 ) -> None:
     """Unloading invokes every subscription teardown function exactly once."""
     unsub = MagicMock()
@@ -165,10 +165,10 @@ async def test_unload_entry_clears_subscriptions(
 async def test_unload_entry_tolerates_unsub_errors(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    patch_platform_forwarding: object,
+    patch_first_refresh: object,
 ) -> None:
     """A raising unsubscriber should not break unload."""
     bad_unsub = MagicMock(side_effect=RuntimeError("boom"))
@@ -260,7 +260,8 @@ async def test_node_vendor_id_get_attribute_raises_is_handled() -> None:
     """If get_attribute_value raises, fall through to legacy path."""
 
     def _raise(*_: object) -> None:
-        raise RuntimeError("transport error")
+        msg = "transport error"
+        raise RuntimeError(msg)
 
     node = SimpleNamespace(
         device_info=None,
@@ -294,10 +295,10 @@ async def test_discover_tcl_nodes_falls_back_to_nodes_dict(
 async def test_setup_entry_propagates_first_refresh_failure(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
     mock_matter_node: MagicMock,
-    patch_platform_forwarding: object,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    patch_platform_forwarding: object,
+    patch_first_refresh: object,
 ) -> None:
     """A failing initial poll surfaces as ConfigEntryNotReady."""
     # Force the coordinator's read path to fail by emptying node_data and
@@ -312,10 +313,10 @@ async def test_setup_entry_propagates_first_refresh_failure(
 async def test_setup_entry_falls_back_to_subscribe_when_subscribe_events_missing(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    patch_platform_forwarding: object,
+    patch_first_refresh: object,
 ) -> None:
     """If ``subscribe_events`` is unavailable, ``subscribe`` is used instead."""
     del mock_matter_client.subscribe_events
@@ -330,10 +331,10 @@ async def test_setup_entry_falls_back_to_subscribe_when_subscribe_events_missing
 async def test_setup_entry_handles_no_subscription_api(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    patch_platform_forwarding: object,
+    patch_first_refresh: object,
 ) -> None:
     """Setup still succeeds when neither subscribe* method exists."""
     del mock_matter_client.subscribe_events
@@ -346,8 +347,8 @@ async def test_setup_entry_handles_no_subscription_api(
 async def test_setup_entry_forwards_to_platforms(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
-    patch_first_refresh: object,  # noqa: ARG001
+    setup_matter_dependency: MockConfigEntry,
+    patch_first_refresh: object,
 ) -> None:
     """async_forward_entry_setups is called once with all our platforms."""
     with patch(

@@ -1,4 +1,4 @@
-# The contents of this file is based on https://github.com/home-assistant/core/blob/dev/pyproject.toml
+# Based on https://github.com/home-assistant/core/blob/dev/pyproject.toml
 
 target-version = "py314"
 
@@ -8,23 +8,16 @@ select = [
 ]
 
 ignore = [
-    "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed
-    "D203",    # no-blank-line-before-class (incompatible with formatter)
-    "D212",    # multi-line-summary-first-line (incompatible with formatter)
-    "COM812",  # incompatible with formatter
-    "ISC001",  # incompatible with formatter
-    "EM101",   # exception strings — readable as-is
-    "EM102",   # f-string in raise — readable as-is
-    "TRY003",  # long exception messages — fine for user-facing UpdateFailed
-    "ERA001",  # commented code — used for forward-looking automation toggles
-    "PLC0415", # late imports avoid circular deps
-    "TD003",   # TODO issue links — overkill for a small repo
-    "S112",    # try/except/continue is the documented fallback pattern
-    "RET504",  # explicit before-return assignment is clearer
-    "PLR2004", # magic comparisons — attribute IDs are themselves the constants
-    "FIX",     # fixme markers are intentional follow-ups
-    "BLE001",  # tolerate broad except in defensive integration paths
-    "PLR0911", # multiple guard-clause returns are clearer than nested ifs
+    # Formatter-incompatible — these MUST be ignored, the formatter rejects code that satisfies them.
+    "D203",   # no-blank-line-before-class
+    "D212",   # multi-line-summary-first-line
+    "COM812", # missing-trailing-comma
+    "ISC001", # implicit-string-concatenation
+
+    # Defensive integration paths legitimately use typing.Any because the
+    # matter-server / python-matter-server / HA matter-client APIs shift across
+    # versions and we adapt by duck-typing. Hard typing here would be brittle.
+    "ANN401", # any-type
 ]
 
 [lint.flake8-pytest-style]
@@ -37,22 +30,18 @@ keep-runtime-typing = true
 max-complexity = 25
 
 [lint.per-file-ignores]
+# Test files have different idioms than production code. These ignores match
+# how home-assistant/core treats its own tests — pytest assertions, fixture
+# private-state poking, and parametrized magic numbers are all expected.
 "tests/**/*.py" = [
-    "S101",    # `assert` is the standard idiom in pytest
+    "S101",    # `assert` is the standard pytest idiom
     "SLF001",  # tests poke private state to set up fixtures
     "PLR2004", # magic numbers are inherent to assertions
-    "ARG001",  # unused arg in fixture-injected parameters
+    "ARG001",  # fixture-injected parameters are typed as unused
     "ARG002",
-    "D",       # docstrings on every test function add noise without value
-    "EM101",   # string literals in raise — fine in tests
-    "EM102",
-    "TRY003",  # long exception messages — fine in tests
-    "BLE001",  # tests catch broad exceptions to assert error paths
-    "PT011",   # pytest.raises without match — tests already document context
-    "INP001",  # implicit namespace package — tests dir is intentional
+    "D",       # not requiring docstrings on every test function
+    "INP001",  # tests/ is intentionally not a package on the import path
     "PLR0913", # many arguments — fixture chains
-    "SIM117",  # nested context managers — explicit is fine
-    "FBT001",  # boolean positional — pytest parametrize
+    "FBT001",  # bool positional fine in parametrize
     "FBT002",
-    "RUF100",  # let formatter / ruff --fix manage noqa hygiene
 ]

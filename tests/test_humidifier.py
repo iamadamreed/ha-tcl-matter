@@ -229,7 +229,8 @@ async def test_write_attribute_falls_back_to_positional(
     async def _write(*args: Any, **kwargs: Any) -> None:
         calls.append((args, kwargs))
         if kwargs:
-            raise TypeError("unsupported")
+            msg = "unsupported"
+            raise TypeError(msg)
 
     mock_matter_client.write_attribute = AsyncMock(side_effect=_write)
     entity = _make_entity(primed_coordinator, mock_matter_client)

@@ -20,7 +20,9 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    ATTR_PATH_PARTS,
     LOGGER,
+    NUM_TCL_FC03_DATA_ATTRS,
     POLL_INTERVAL_SECONDS,
     TCL_CLUSTER_FC03,
 )
@@ -60,12 +62,16 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         for node_id, device in self._devices.items():
             try:
                 attrs = await self._read_cluster(node_id)
+            # Defensive: matter-server raises an open-ended set of exception
+            # types across versions; we want to fall back to cached values
+            # rather than crash the coordinator.
             except Exception as err:
                 LOGGER.debug("Polling node %s failed: %s", node_id, err)
                 # Re-raise as UpdateFailed only if we have nothing cached yet,
                 # so a transient miss does not blank-out a working device.
                 if not device.attributes:
-                    raise UpdateFailed(f"node {node_id}: {err}") from err
+                    msg = f"node {node_id}: {err}"
+                    raise UpdateFailed(msg) from err
                 continue
 
             device.attributes.update(attrs)
@@ -87,12 +93,14 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         """
         device = self._devices.get(node_id)
         if device is None:
-            raise UpdateFailed(f"unknown node_id {node_id}")
+            msg = f"unknown node_id {node_id}"
+            raise UpdateFailed(msg)
 
         node = device.node
         get_attr = getattr(node, "get_attribute_value", None)
         if not callable(get_attr):
-            raise UpdateFailed("MatterNode has no get_attribute_value() method")
+            msg = "MatterNode has no get_attribute_value() method"
+            raise UpdateFailed(msg)
 
         out: dict[int, Any] = {}
 
@@ -113,22 +121,31 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
                     attr_id = int(attr_str)
                 except ValueError:
                     continue
-                # only keep our known data attrs (0..6); skip cluster metadata
-                if 0 <= attr_id < 7:
+                # Keep only our known data attrs; skip cluster metadata (>=0xFFF8).
+                if 0 <= attr_id < NUM_TCL_FC03_DATA_ATTRS:
                     out[attr_id] = value
 
         # Fallback: get_attribute_value (works once a cluster decoder is registered).
         if not out:
-            for attr_id in range(7):
+            for attr_id in range(NUM_TCL_FC03_DATA_ATTRS):
                 try:
                     value = get_attr(1, TCL_CLUSTER_FC03, attr_id)
-                except Exception:
+                # Defensive: skip individual attrs that the matter client
+                # cannot decode rather than failing the whole poll.
+                except Exception as err:  # noqa: BLE001
+                    LOGGER.debug(
+                        "node %s attr %s read fallback failed: %s",
+                        node_id,
+                        attr_id,
+                        err,
+                    )
                     continue
                 if value is not None:
                     out[attr_id] = value
 
         if not out:
-            raise UpdateFailed("no attributes readable from cluster 0x1334FC03")
+            msg = "no attributes readable from cluster 0x1334FC03"
+            raise UpdateFailed(msg)
         return out
 
     @staticmethod
@@ -145,7 +162,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
             return out
 
         for key, value in result.items():
-            if isinstance(key, str) and key.count("/") == 2:
+            if isinstance(key, str) and key.count("/") == ATTR_PATH_PARTS - 1:
                 _, _, attr_str = key.split("/")
                 try:
                     out[int(attr_str)] = value
@@ -153,9 +170,9 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
                     continue
                 continue
 
-            # Nested form: drill down to attr-keyed dict
+            # Nested form: drill down to attr-keyed dict.
+            # value is endpoint -> cluster -> attr -> v, or cluster -> attr -> v.
             if isinstance(value, dict):
-                # value: {endpoint: {cluster: {attr: v}}} or {cluster: {attr: v}}
                 for inner in _walk_to_attr_dict(value):
                     for attr_id, attr_val in inner.items():
                         try:
@@ -164,7 +181,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
                             continue
         return out
 
-    def handle_push_event(self, event: Any, data: Any = None) -> None:
+    def handle_push_event(self, event: Any, data: Any = None) -> None:  # noqa: PLR0911
         """
         Apply a single push update to the cached snapshot.
 
@@ -172,6 +189,10 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         the payload. We accept several shapes because python-matter-server
         has not stabilised its event API across versions. Anything we do
         not recognise is logged at debug level and ignored.
+
+        The early-return guard clauses validate untrusted input shapes from
+        the matter client; collapsing them into a single return path would
+        hurt readability, so PLR0911 is accepted here.
         """
         payload = data if data is not None else event
         if not isinstance(payload, dict):
@@ -190,9 +211,9 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         if node_id_int not in self._devices:
             return
 
-        # Path: "endpoint/cluster/attr"
+        # The path string is endpoint, cluster, and attr separated by slashes.
         parts = path.split("/")
-        if len(parts) != 3:
+        if len(parts) != ATTR_PATH_PARTS:
             return
         try:
             cluster_id = int(parts[1])

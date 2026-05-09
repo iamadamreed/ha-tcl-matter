@@ -89,7 +89,8 @@ class TclModeSelect(TclMatterEntity, SelectEntity):
         except TypeError:
             try:
                 await write(self._node_id, path, value)
-            except Exception:
+            # Defensive: matter-server APIs raise inconsistent types across versions.
+            except Exception:  # noqa: BLE001
                 LOGGER.exception(
                     "write_attribute failed for node=%s mode=%s",
                     self._node_id,

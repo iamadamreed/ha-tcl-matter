@@ -17,8 +17,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
+    BASIC_INFORMATION_CLUSTER,
+    BASIC_INFORMATION_VENDOR_ID_ATTR,
     LOGGER,
     MATTER_DOMAIN,
     TCL_CLUSTER_FC03,
@@ -80,7 +83,7 @@ def _get_matter_client(hass: HomeAssistant) -> Any | None:
             if adapter is not None and hasattr(adapter, "matter_client"):
                 return adapter.matter_client
 
-        # Legacy: hass.data["matter"][entry_id].adapter.matter_client
+        # Fall back to the legacy hass.data layout used before runtime_data.
         matter_data = hass.data.get(MATTER_DOMAIN, {})
         entry_data = matter_data.get(matter_entry.entry_id)
         if entry_data is not None:
@@ -115,8 +118,11 @@ def _node_vendor_id(node: Any) -> int | None:
     get_attr = getattr(node, "get_attribute_value", None)
     if callable(get_attr):
         try:
-            value = get_attr(0, 0x0028, 2)  # BasicInformation, VendorID
-        except Exception:
+            value = get_attr(
+                0, BASIC_INFORMATION_CLUSTER, BASIC_INFORMATION_VENDOR_ID_ATTR
+            )
+        # Defensive: matter-server APIs raise inconsistent types across versions.
+        except Exception:  # noqa: BLE001
             value = None
         if value is not None:
             try:
@@ -179,7 +185,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) ->
     matter_client = _get_matter_client(hass)
     if matter_client is None:
         LOGGER.debug("Matter integration not yet loaded; deferring TCL Matter setup")
-        raise ConfigEntryNotReady("matter integration not loaded")
+        msg = "matter integration not loaded"
+        raise ConfigEntryNotReady(msg)
 
     tcl_nodes = _discover_tcl_nodes(matter_client)
     if not tcl_nodes:
@@ -200,12 +207,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) ->
         devices=devices,
     )
 
-    # Initial attribute snapshot. If this fails, surface as ConfigEntryNotReady
-    # so HA retries instead of leaving entities permanently unknown.
+    # Initial attribute snapshot. UpdateFailed is the expected raise path; we
+    # surface it as ConfigEntryNotReady so HA retries instead of leaving
+    # entities permanently unknown.
     try:
         await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        raise ConfigEntryNotReady(f"initial TCL attribute read failed: {err}") from err
+    except UpdateFailed as err:
+        msg = f"initial TCL attribute read failed: {err}"
+        raise ConfigEntryNotReady(msg) from err
 
     runtime = TclMatterRuntimeData(
         coordinator=coordinator,
@@ -244,7 +253,8 @@ def _attach_push_subscription(
         """Handle a push attribute update from the matter client."""
         try:
             coordinator.handle_push_event(event, data)
-        except Exception:
+        # Defensive: a broken push payload should never crash the listener.
+        except Exception:  # noqa: BLE001
             LOGGER.exception("Error handling matter push event")
 
     # Try modern signature: subscribe_events(callback, event_filter=...)
@@ -286,7 +296,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -
     for unsub in runtime.unsubscribers:
         try:
             unsub()
-        except Exception:
+        # Defensive: matter-server unsubscribe handlers raise inconsistently.
+        except Exception:  # noqa: BLE001
             LOGGER.debug("Error unsubscribing matter listener", exc_info=True)
     runtime.unsubscribers.clear()
 

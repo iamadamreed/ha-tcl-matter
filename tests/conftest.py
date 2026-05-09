@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.tcl_matter import TclDevice
 from custom_components.tcl_matter.const import (
     ATTR_BUCKET_FULL,
     ATTR_CURRENT_HUMIDITY,
@@ -21,6 +22,7 @@ from custom_components.tcl_matter.const import (
     TCL_CLUSTER_FC03,
     TCL_VENDOR_ID,
 )
+from custom_components.tcl_matter.coordinator import TclMatterCoordinator
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -32,7 +34,7 @@ DEFAULT_NODE_ID = 5
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(
-    enable_custom_integrations: Any,  # noqa: ARG001
+    enable_custom_integrations: Any,
 ) -> None:
     """Enable loading of the custom integration in every test."""
     return
@@ -217,8 +219,6 @@ def make_tcl_device() -> Any:
         node_id: int = DEFAULT_NODE_ID,
         attributes: dict[int, Any] | None = None,
     ) -> Any:
-        from custom_components.tcl_matter import TclDevice
-
         attributes = dict(attributes) if attributes else {}
         node_attrs: dict[str, Any] = {
             f"1/{TCL_CLUSTER_FC03}/{attr_id}": value
@@ -251,14 +251,11 @@ def make_coordinator(
     """Return a factory that builds a TclMatterCoordinator with given devices."""
 
     def _factory(devices: dict[int, Any]) -> Any:
-        from custom_components.tcl_matter.coordinator import TclMatterCoordinator
-
-        coordinator = TclMatterCoordinator(
+        return TclMatterCoordinator(
             hass=hass,
             matter_client=mock_matter_client,
             devices=devices,
         )
-        return coordinator
 
     return _factory
 

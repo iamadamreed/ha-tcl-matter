@@ -103,7 +103,8 @@ async def test_async_select_option_falls_back_to_positional(
     async def _write(*args: Any, **kwargs: Any) -> None:
         calls.append((args, kwargs))
         if kwargs:
-            raise TypeError("kwargs not supported")
+            msg = "kwargs not supported"
+            raise TypeError(msg)
 
     mock_matter_client.write_attribute = AsyncMock(side_effect=_write)
     select = TclModeSelect(primed_coordinator, mock_matter_client, NODE_ID)
