@@ -1,4 +1,5 @@
-"""Humidifier platform for TCL Matter dehumidifiers.
+"""
+Humidifier platform for TCL Matter dehumidifiers.
 
 Exposes a single :class:`TclDehumidifier` per discovered TCL node. The
 target humidity (attr 1) and operating mode (attr 0) are written back
@@ -73,7 +74,8 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return True if the unit appears to be running.
+        """
+        Return True if the unit appears to be running.
 
         TCL exposes power as a separate OnOff cluster on the same node.
         Until we wire that in, we treat the device as on whenever its
@@ -127,7 +129,8 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
         await self._write_attr(ATTR_MODE, MODE_NAME_MAP[mode])
 
     async def _write_attr(self, attr_id: int, value: Any) -> None:
-        """Issue a matter write_attribute for one of our vendor attrs.
+        """
+        Issue a matter write_attribute for one of our vendor attrs.
 
         The matter client API has shifted between releases: some take
         ``attribute_path=`` with a string, others take a parsed Attribute

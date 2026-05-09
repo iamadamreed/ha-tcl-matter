@@ -8,15 +8,15 @@ from unittest.mock import MagicMock
 import pytest
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from custom_components.tcl_matter.coordinator import (
-    TclMatterCoordinator,
-    _walk_to_attr_dict,
-)
 from custom_components.tcl_matter.const import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_MODE,
     ATTR_TARGET_HUMIDITY,
     TCL_CLUSTER_FC03,
+)
+from custom_components.tcl_matter.coordinator import (
+    TclMatterCoordinator,
+    _walk_to_attr_dict,
 )
 
 if TYPE_CHECKING:

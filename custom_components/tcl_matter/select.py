@@ -1,4 +1,5 @@
-"""Select platform for TCL Matter dehumidifiers.
+"""
+Select platform for TCL Matter dehumidifiers.
 
 Mirrors the humidifier's mode attribute as a standalone select entity.
 This is convenient for users who want to bind mode to a dashboard tile

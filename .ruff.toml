@@ -8,11 +8,22 @@ select = [
 ]
 
 ignore = [
-    "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
-    "D203", # no-blank-line-before-class (incompatible with formatter)
-    "D212", # multi-line-summary-first-line (incompatible with formatter)
-    "COM812", # incompatible with formatter
-    "ISC001", # incompatible with formatter
+    "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed
+    "D203",    # no-blank-line-before-class (incompatible with formatter)
+    "D212",    # multi-line-summary-first-line (incompatible with formatter)
+    "COM812",  # incompatible with formatter
+    "ISC001",  # incompatible with formatter
+    "EM101",   # exception strings — readable as-is
+    "EM102",   # f-string in raise — readable as-is
+    "TRY003",  # long exception messages — fine for user-facing UpdateFailed
+    "ERA001",  # commented code — used for forward-looking automation toggles
+    "PLC0415", # late imports avoid circular deps
+    "TD003",   # TODO issue links — overkill for a small repo
+    "S112",    # try/except/continue is the documented fallback pattern
+    "RET504",  # explicit before-return assignment is clearer
+    "PLR2004", # magic comparisons — attribute IDs are themselves the constants
+    "FIX",     # fixme markers are intentional follow-ups
+    "BLE001",  # tolerate broad except in defensive integration paths
 ]
 
 [lint.flake8-pytest-style]
@@ -26,10 +37,21 @@ max-complexity = 25
 
 [lint.per-file-ignores]
 "tests/**/*.py" = [
-    "S101",   # `assert` is the standard idiom in pytest
-    "SLF001", # tests routinely poke private state to set up fixtures
+    "S101",    # `assert` is the standard idiom in pytest
+    "SLF001",  # tests poke private state to set up fixtures
     "PLR2004", # magic numbers are inherent to assertions
     "ARG001",  # unused arg in fixture-injected parameters
     "ARG002",
     "D",       # docstrings on every test function add noise without value
+    "EM101",   # string literals in raise — fine in tests
+    "EM102",
+    "TRY003",  # long exception messages — fine in tests
+    "BLE001",  # tests catch broad exceptions to assert error paths
+    "PT011",   # pytest.raises without match — tests already document context
+    "INP001",  # implicit namespace package — tests dir is intentional
+    "PLR0913", # many arguments — fixture chains
+    "SIM117",  # nested context managers — explicit is fine
+    "FBT001",  # boolean positional — pytest parametrize
+    "FBT002",
+    "RUF100",  # let formatter / ruff --fix manage noqa hygiene
 ]

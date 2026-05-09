@@ -46,7 +46,7 @@ async def _refresh_without_config_entry(self: object) -> None:
 
 
 @pytest.fixture
-def patch_first_refresh() -> Generator[None, None, None]:
+def patch_first_refresh() -> Generator[None]:
     """Patch the coordinator's first_refresh to bypass the config_entry check."""
     with patch(
         "custom_components.tcl_matter.coordinator.TclMatterCoordinator"
@@ -57,7 +57,7 @@ def patch_first_refresh() -> Generator[None, None, None]:
 
 
 @pytest.fixture
-def patch_platform_forwarding() -> Generator[None, None, None]:
+def patch_platform_forwarding() -> Generator[None]:
     """Patch hass platform forward / unload helpers so we can drive setup directly.
 
     The TCL Matter platforms exercise their own behavior in dedicated test

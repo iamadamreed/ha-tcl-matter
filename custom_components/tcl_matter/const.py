@@ -1,4 +1,5 @@
-"""Constants for the TCL Matter integration.
+"""
+Constants for the TCL Matter integration.
 
 Empirical mapping of TCL vendor-specific Matter clusters discovered on
 TCL H50D44W dehumidifier (VendorID 0x1334). All values were observed by

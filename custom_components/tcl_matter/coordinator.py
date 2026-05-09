@@ -1,4 +1,5 @@
-"""DataUpdateCoordinator for TCL Matter vendor cluster reads.
+"""
+DataUpdateCoordinator for TCL Matter vendor cluster reads.
 
 This coordinator is the single source of truth for the per-node attribute
 snapshot of cluster 0x1334FC03. It supports two ingestion paths:
@@ -59,7 +60,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         for node_id, device in self._devices.items():
             try:
                 attrs = await self._read_cluster(node_id)
-            except Exception as err:  # noqa: BLE001
+            except Exception as err:
                 LOGGER.debug("Polling node %s failed: %s", node_id, err)
                 # Re-raise as UpdateFailed only if we have nothing cached yet,
                 # so a transient miss does not blank-out a working device.
@@ -73,7 +74,8 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         return snapshot
 
     async def _read_cluster(self, node_id: int) -> dict[int, Any]:
-        """Read all known attributes of cluster 0x1334FC03 for ``node_id``.
+        """
+        Read all known attributes of cluster 0x1334FC03 for ``node_id``.
 
         Uses ``node.get_attribute_value(endpoint, cluster_id, attribute_id)``
         which returns the live cached value the matter-server already
@@ -131,7 +133,8 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
 
     @staticmethod
     def _normalize_read_result(result: Any) -> dict[int, Any]:
-        """Coerce a matter read response into ``{attr_id: value}``.
+        """
+        Coerce a matter read response into ``{attr_id: value}``.
 
         The matter client may return either:
         * ``{"1/322239491/0": value, ...}`` — flat path → value, or
@@ -162,7 +165,8 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         return out
 
     def handle_push_event(self, event: Any, data: Any = None) -> None:
-        """Apply a single push update to the cached snapshot.
+        """
+        Apply a single push update to the cached snapshot.
 
         ``event`` may be a string event-type or an enum; ``data`` contains
         the payload. We accept several shapes because python-matter-server
@@ -206,7 +210,8 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
 
 
 def _walk_to_attr_dict(d: dict[Any, Any]) -> list[dict[Any, Any]]:
-    """Walk a nested dict and return every leaf-level dict.
+    """
+    Walk a nested dict and return every leaf-level dict.
 
     Used by :meth:`TclMatterCoordinator._normalize_read_result` to handle
     nested response shapes without committing to one library version.

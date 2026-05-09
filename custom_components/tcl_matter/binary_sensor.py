@@ -1,4 +1,5 @@
-"""Binary sensor platform for TCL Matter dehumidifiers.
+"""
+Binary sensor platform for TCL Matter dehumidifiers.
 
 Exposes the two boolean status flags on cluster 0x1334FC03:
 
@@ -78,7 +79,8 @@ class TclBucketFullBinarySensor(TclMatterEntity, BinarySensorEntity):
 
 
 class TclFilterAlertBinarySensor(TclMatterEntity, BinarySensorEntity):
-    """Filter / lock alert (attr 4).
+    """
+    Filter / lock alert (attr 4).
 
     TODO(empirical): confirm whether this attribute reports a filter
     clean reminder, a child lock state, or both. Toggle the lock and

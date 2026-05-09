@@ -1,4 +1,5 @@
-"""Config flow for TCL Matter.
+"""
+Config flow for TCL Matter.
 
 Single-instance, no user input. The integration auto-discovers TCL nodes
 from the built-in matter integration at runtime, so there is nothing to
@@ -8,14 +9,11 @@ prevent multiple entries.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 
 from .const import DOMAIN
-
-if TYPE_CHECKING:
-    pass
 
 
 class TclMatterConfigFlow(ConfigFlow, domain=DOMAIN):

@@ -1,4 +1,5 @@
-"""TCL Matter integration.
+"""
+TCL Matter integration.
 
 Decodes TCL's vendor-specific Matter clusters (0x1334FC00 / 0x1334FC03)
 that the built-in matter integration exposes as opaque attributes. This
@@ -38,7 +39,8 @@ PLATFORMS: list[Platform] = [
 
 @dataclass
 class TclDevice:
-    """Per-node runtime container.
+    """
+    Per-node runtime container.
 
     Stores the matter node reference plus the most recent attribute snapshot
     pulled from cluster 0x1334FC03. The dict is keyed by attribute ID.
@@ -63,7 +65,8 @@ type TclMatterConfigEntry = ConfigEntry[TclMatterRuntimeData]
 
 
 def _get_matter_client(hass: HomeAssistant) -> Any | None:
-    """Return the matter client from the loaded matter ConfigEntry, or None.
+    """
+    Return the matter client from the loaded matter ConfigEntry, or None.
 
     The location of the client moved across HA releases. We try the modern
     ``runtime_data`` path first and fall back to ``hass.data["matter"]``.
@@ -89,7 +92,8 @@ def _get_matter_client(hass: HomeAssistant) -> Any | None:
 
 
 def _node_vendor_id(node: Any) -> int | None:
-    """Extract the vendor ID from a matter node, tolerating API variants.
+    """
+    Extract the vendor ID from a matter node, tolerating API variants.
 
     Tries (in order):
       1. ``node.device_info.vendorID`` — python-matter-server 5.x decoded form
@@ -160,7 +164,8 @@ def _discover_tcl_nodes(matter_client: Any) -> list[Any]:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -> bool:
-    """Set up TCL Matter from a config entry.
+    """
+    Set up TCL Matter from a config entry.
 
     Hard-depends on the matter integration being loaded. Discovers TCL
     nodes by VendorID, builds a coordinator that polls cluster 0x1334FC03
@@ -195,7 +200,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) ->
     # so HA retries instead of leaving entities permanently unknown.
     try:
         await coordinator.async_config_entry_first_refresh()
-    except Exception as err:  # noqa: BLE001 — propagate as not-ready
+    except Exception as err:
         raise ConfigEntryNotReady(f"initial TCL attribute read failed: {err}") from err
 
     runtime = TclMatterRuntimeData(
@@ -222,7 +227,8 @@ def _attach_push_subscription(
     runtime: TclMatterRuntimeData,
     coordinator: TclMatterCoordinator,
 ) -> None:
-    """Subscribe to attribute-updated events on the matter client.
+    """
+    Subscribe to attribute-updated events on the matter client.
 
     The python-matter-server client exposes ``subscribe_events`` /
     ``subscribe`` with varying signatures across versions. We attempt the

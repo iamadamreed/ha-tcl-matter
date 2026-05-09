@@ -1,4 +1,5 @@
-"""Sensor platform for TCL Matter dehumidifiers.
+"""
+Sensor platform for TCL Matter dehumidifiers.
 
 Surfaces the diagnostic side of the vendor cluster:
 
@@ -70,7 +71,8 @@ class TclCurrentHumiditySensor(TclMatterEntity, SensorEntity):
 
 
 class TclErrorCodeSensor(TclMatterEntity, SensorEntity):
-    """Active TCL error codes (attr 5).
+    """
+    Active TCL error codes (attr 5).
 
     The raw value is a JSON-encoded list (e.g. ``"[]"`` for no errors).
     The state is the count of active codes; the raw list is exposed as an

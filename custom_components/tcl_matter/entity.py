@@ -1,4 +1,5 @@
-"""Base entity for TCL Matter platforms.
+"""
+Base entity for TCL Matter platforms.
 
 All TCL Matter entities share a coordinator and bind to the same device
 identifier as the built-in matter integration (``("matter", node_id)``)
