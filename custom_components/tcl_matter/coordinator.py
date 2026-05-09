@@ -108,7 +108,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
             for path, value in raw_attrs.items():
                 if not isinstance(path, str) or not path.startswith(prefix):
                     continue
-                attr_str = path[len(prefix):]
+                attr_str = path[len(prefix) :]
                 try:
                     attr_id = int(attr_str)
                 except ValueError:
@@ -160,7 +160,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
                     for attr_id, attr_val in inner.items():
                         try:
                             out[int(attr_id)] = attr_val
-                        except (TypeError, ValueError):
+                        except TypeError, ValueError:
                             continue
         return out
 
@@ -185,7 +185,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
             return
         try:
             node_id_int = int(node_id)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return
         if node_id_int not in self._devices:
             return

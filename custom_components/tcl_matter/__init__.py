@@ -108,7 +108,7 @@ def _node_vendor_id(node: Any) -> int | None:
             if value is not None:
                 try:
                     return int(value)
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     pass
 
     # Path 2: get_attribute_value(endpoint, cluster, attribute)
@@ -121,7 +121,7 @@ def _node_vendor_id(node: Any) -> int | None:
         if value is not None:
             try:
                 return int(value)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 pass
 
     # Path 3: legacy direct attribute
@@ -129,7 +129,7 @@ def _node_vendor_id(node: Any) -> int | None:
     if vendor_id is not None:
         try:
             return int(vendor_id)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
 
     return None

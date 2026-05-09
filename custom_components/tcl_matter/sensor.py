@@ -66,7 +66,7 @@ class TclCurrentHumiditySensor(TclMatterEntity, SensorEntity):
         value = self._node_data.get(ATTR_CURRENT_HUMIDITY)
         try:
             return int(value) if value is not None else None
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
 

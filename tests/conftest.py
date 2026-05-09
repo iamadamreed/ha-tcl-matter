@@ -274,5 +274,3 @@ def primed_coordinator(
     coordinator = make_coordinator({DEFAULT_NODE_ID: device})
     coordinator.data = {DEFAULT_NODE_ID: dict(default_node_attributes)}
     return coordinator
-
-

@@ -206,9 +206,7 @@ async def test_get_matter_client_legacy_data(hass: HomeAssistant) -> None:
 
 async def test_get_matter_client_not_loaded(hass: HomeAssistant) -> None:
     """Returns None when no matter entries exist."""
-    with patch.object(
-        hass.config_entries, "async_entries", MagicMock(return_value=[])
-    ):
+    with patch.object(hass.config_entries, "async_entries", MagicMock(return_value=[])):
         assert _get_matter_client(hass) is None
 
 

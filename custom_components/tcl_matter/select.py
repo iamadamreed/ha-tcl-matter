@@ -69,7 +69,7 @@ class TclModeSelect(TclMatterEntity, SelectEntity):
             return None
         try:
             return MODE_VALUE_MAP.get(int(raw))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
     async def async_select_option(self, option: str) -> None:

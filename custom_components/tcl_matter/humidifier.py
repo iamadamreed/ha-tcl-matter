@@ -93,7 +93,7 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
         value = self._node_data.get(ATTR_TARGET_HUMIDITY)
         try:
             return int(value) if value is not None else None
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
     @property
@@ -102,7 +102,7 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
         value = self._node_data.get(ATTR_CURRENT_HUMIDITY)
         try:
             return int(value) if value is not None else None
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
     @property
@@ -113,7 +113,7 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
             return None
         try:
             return MODE_VALUE_MAP.get(int(raw))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
     async def async_set_humidity(self, humidity: int) -> None:
