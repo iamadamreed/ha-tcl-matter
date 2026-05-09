@@ -24,6 +24,7 @@ ignore = [
     "PLR2004", # magic comparisons — attribute IDs are themselves the constants
     "FIX",     # fixme markers are intentional follow-ups
     "BLE001",  # tolerate broad except in defensive integration paths
+    "PLR0911", # multiple guard-clause returns are clearer than nested ifs
 ]
 
 [lint.flake8-pytest-style]
