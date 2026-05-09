@@ -51,20 +51,69 @@ def default_node_attributes() -> dict[int, Any]:
     }
 
 
+def _make_device_info(
+    *,
+    vendor_id: int = TCL_VENDOR_ID,
+    product_id: int = 0x8002,
+    product_name: str = "TCL Dehumidifier",
+    vendor_name: str = "TCL",
+    hardware_version_string: str = "1.0",
+    software_version_string: str = "1.0.0",
+) -> SimpleNamespace:
+    """Build a BasicInformation-shaped device_info object.
+
+    Mirrors python-matter-server 5.x ``MatterNode.device_info`` (a dataclass
+    that exposes ``vendorID``, ``productID``, ``vendorName``, ``productName``,
+    ``hardwareVersionString``, ``softwareVersionString``).
+    """
+    return SimpleNamespace(
+        vendorID=vendor_id,
+        productID=product_id,
+        vendorName=vendor_name,
+        productName=product_name,
+        hardwareVersionString=hardware_version_string,
+        softwareVersionString=software_version_string,
+    )
+
+
+def _make_node_data(attributes: dict[str, Any]) -> SimpleNamespace:
+    """Build a ``node_data`` namespace whose ``.attributes`` is a path-keyed dict."""
+    return SimpleNamespace(attributes=dict(attributes))
+
+
 @pytest.fixture
 def mock_matter_node(default_node_attributes: dict[int, Any]) -> MagicMock:
-    """Return a fake MatterNode pre-populated with TCL cluster data."""
+    """Return a fake MatterNode pre-populated with TCL cluster data.
+
+    Provides the modern ``device_info`` dataclass, ``node_data.attributes``
+    path-string dict, and ``get_attribute_value(endpoint, cluster, attr)``
+    method that the current integration uses.
+    """
     node = MagicMock(name="MatterNode")
     node.node_id = DEFAULT_NODE_ID
-    node.vendor_id = TCL_VENDOR_ID
-    # python-matter-server exposes node attributes keyed by "endpoint/cluster/attr"
-    node.attributes = {
+    # Modern path-string node_data dict (the only path the coordinator reads now).
+    node_attrs: dict[str, Any] = {
         f"1/{TCL_CLUSTER_FC03}/{attr_id}": value
         for attr_id, value in default_node_attributes.items()
     }
-    # Also expose BasicInformation VendorID at the conventional 0/40/1 path so
-    # the integration's vendor-id fallback works if direct access is bypassed.
-    node.attributes["0/40/1"] = TCL_VENDOR_ID
+    # Cluster metadata attributes the coordinator must skip.
+    node_attrs[f"1/{TCL_CLUSTER_FC03}/65528"] = []
+    node_attrs[f"1/{TCL_CLUSTER_FC03}/65532"] = 0
+    # BasicInformation cluster is also present at endpoint 0.
+    node_attrs["0/40/1"] = TCL_VENDOR_ID
+    node.node_data = _make_node_data(node_attrs)
+
+    # python-matter-server 5.x BasicInformation dataclass.
+    node.device_info = _make_device_info()
+
+    # get_attribute_value(endpoint, cluster, attr) — returns from node_data.attributes.
+    def _get_attr(endpoint: int, cluster: int, attr: int) -> Any:
+        return node.node_data.attributes.get(f"{endpoint}/{cluster}/{attr}")
+
+    node.get_attribute_value = MagicMock(side_effect=_get_attr)
+
+    # Legacy direct attribute (still accepted as a tertiary fallback).
+    node.vendor_id = TCL_VENDOR_ID
     return node
 
 
@@ -73,8 +122,17 @@ def non_tcl_matter_node() -> MagicMock:
     """Return a fake MatterNode from a non-TCL vendor (should be ignored)."""
     node = MagicMock(name="NonTclMatterNode")
     node.node_id = 99
+    node.device_info = _make_device_info(
+        vendor_id=0x1234,
+        product_id=0x0001,
+        product_name="OtherDevice",
+        vendor_name="OtherCo",
+    )
+    node.node_data = _make_node_data({"0/40/1": 0x1234})
+    node.get_attribute_value = MagicMock(
+        side_effect=lambda e, c, a: node.node_data.attributes.get(f"{e}/{c}/{a}")
+    )
     node.vendor_id = 0x1234
-    node.attributes = {"0/40/1": 0x1234}
     return node
 
 
@@ -147,7 +205,13 @@ def setup_matter_dependency(mock_matter_entry: MockConfigEntry) -> MockConfigEnt
 
 @pytest.fixture
 def make_tcl_device() -> Any:
-    """Return a factory that builds a TclDevice with the given attributes."""
+    """Return a factory that builds a TclDevice with the given attributes.
+
+    The underlying mock node carries a ``node_data.attributes`` dict whose
+    keys mirror the live attributes (``"1/{TCL_CLUSTER_FC03}/{attr}"``), a
+    ``device_info`` dataclass, and a working ``get_attribute_value`` method
+    so the coordinator's primary read path succeeds.
+    """
 
     def _factory(
         node_id: int = DEFAULT_NODE_ID,
@@ -155,10 +219,25 @@ def make_tcl_device() -> Any:
     ) -> Any:
         from custom_components.tcl_matter import TclDevice
 
+        attributes = dict(attributes) if attributes else {}
+        node_attrs: dict[str, Any] = {
+            f"1/{TCL_CLUSTER_FC03}/{attr_id}": value
+            for attr_id, value in attributes.items()
+        }
+        node_attrs["0/40/1"] = TCL_VENDOR_ID
+        node = MagicMock(name=f"Node{node_id}")
+        node.node_id = node_id
+        node.node_data = _make_node_data(node_attrs)
+        node.device_info = _make_device_info()
+        node.vendor_id = TCL_VENDOR_ID
+        node.get_attribute_value = MagicMock(
+            side_effect=lambda e, c, a: node.node_data.attributes.get(f"{e}/{c}/{a}")
+        )
+
         return TclDevice(
             node_id=node_id,
-            node=MagicMock(name=f"Node{node_id}"),
-            attributes=dict(attributes) if attributes else {},
+            node=node,
+            attributes=dict(attributes),
         )
 
     return _factory

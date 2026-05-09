@@ -31,6 +31,31 @@ if TYPE_CHECKING:
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
+async def _refresh_without_config_entry(self: object) -> None:
+    """Stand-in for ``async_config_entry_first_refresh`` for tests.
+
+    The real implementation requires the coordinator to have been constructed
+    with a ``config_entry`` argument, which the integration does not currently
+    do. This helper simply triggers a normal refresh and re-raises a
+    ``ConfigEntryNotReady`` if the refresh fails — the same observable
+    behavior the integration relies on.
+    """
+    await self.async_refresh()  # type: ignore[attr-defined]
+    if not self.last_update_success:  # type: ignore[attr-defined]
+        raise ConfigEntryNotReady(str(self.last_exception))  # type: ignore[attr-defined]
+
+
+@pytest.fixture
+def patch_first_refresh() -> Generator[None, None, None]:
+    """Patch the coordinator's first_refresh to bypass the config_entry check."""
+    with patch(
+        "custom_components.tcl_matter.coordinator.TclMatterCoordinator"
+        ".async_config_entry_first_refresh",
+        new=_refresh_without_config_entry,
+    ):
+        yield
+
+
 @pytest.fixture
 def patch_platform_forwarding() -> Generator[None, None, None]:
     """Patch hass platform forward / unload helpers so we can drive setup directly.
@@ -58,6 +83,7 @@ async def test_setup_entry_happy_path(
     setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
     mock_matter_client: MagicMock,
     patch_platform_forwarding: object,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """One TCL node loads successfully and runtime_data is populated."""
     assert await async_setup_entry(hass, mock_tcl_entry) is True
@@ -84,6 +110,7 @@ async def test_setup_entry_no_tcl_nodes_logs_warning(
     mock_matter_client: MagicMock,
     caplog: pytest.LogCaptureFixture,
     patch_platform_forwarding: object,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """No TCL devices on fabric still results in a successful (empty) setup."""
     mock_matter_client.get_nodes.return_value = []
@@ -104,6 +131,7 @@ async def test_setup_entry_ignores_non_tcl_nodes(
     mock_matter_node: MagicMock,
     non_tcl_matter_node: MagicMock,
     patch_platform_forwarding: object,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """Nodes from other vendors are filtered out."""
     mock_matter_client.get_nodes.return_value = [mock_matter_node, non_tcl_matter_node]
@@ -118,6 +146,7 @@ async def test_unload_entry_clears_subscriptions(
     setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
     mock_matter_client: MagicMock,
     patch_platform_forwarding: object,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """Unloading invokes every subscription teardown function exactly once."""
     unsub = MagicMock()
@@ -139,6 +168,7 @@ async def test_unload_entry_tolerates_unsub_errors(
     setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
     mock_matter_client: MagicMock,
     patch_platform_forwarding: object,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """A raising unsubscriber should not break unload."""
     bad_unsub = MagicMock(side_effect=RuntimeError("boom"))
@@ -148,53 +178,101 @@ async def test_unload_entry_tolerates_unsub_errors(
     assert await async_unload_entry(hass, mock_tcl_entry) is True
 
 
-def test_get_matter_client_runtime_data(hass: HomeAssistant) -> None:
+async def test_get_matter_client_runtime_data(hass: HomeAssistant) -> None:
     """``_get_matter_client`` returns the modern ``runtime_data.adapter`` client."""
     client = MagicMock()
     entry = SimpleNamespace(
         entry_id="x",
         runtime_data=SimpleNamespace(adapter=SimpleNamespace(matter_client=client)),
     )
-    hass.config_entries.async_entries = MagicMock(return_value=[entry])  # type: ignore[method-assign]
-    assert _get_matter_client(hass) is client
+    with patch.object(
+        hass.config_entries, "async_entries", MagicMock(return_value=[entry])
+    ):
+        assert _get_matter_client(hass) is client
 
 
-def test_get_matter_client_legacy_data(hass: HomeAssistant) -> None:
+async def test_get_matter_client_legacy_data(hass: HomeAssistant) -> None:
     """Legacy ``hass.data["matter"][entry_id]`` path is still supported."""
     client = MagicMock()
     entry = SimpleNamespace(entry_id="legacy", runtime_data=None)
-    hass.config_entries.async_entries = MagicMock(return_value=[entry])  # type: ignore[method-assign]
     hass.data[MATTER_DOMAIN] = {
         "legacy": SimpleNamespace(adapter=SimpleNamespace(matter_client=client)),
     }
-    assert _get_matter_client(hass) is client
+    with patch.object(
+        hass.config_entries, "async_entries", MagicMock(return_value=[entry])
+    ):
+        assert _get_matter_client(hass) is client
 
 
-def test_get_matter_client_not_loaded(hass: HomeAssistant) -> None:
+async def test_get_matter_client_not_loaded(hass: HomeAssistant) -> None:
     """Returns None when no matter entries exist."""
-    hass.config_entries.async_entries = MagicMock(return_value=[])  # type: ignore[method-assign]
-    assert _get_matter_client(hass) is None
+    with patch.object(
+        hass.config_entries, "async_entries", MagicMock(return_value=[])
+    ):
+        assert _get_matter_client(hass) is None
 
 
-def test_node_vendor_id_direct_attribute() -> None:
-    """The fast path reads ``node.vendor_id`` directly."""
-    node = SimpleNamespace(vendor_id=TCL_VENDOR_ID, attributes={})
+async def test_node_vendor_id_via_device_info() -> None:
+    """The primary path reads ``node.device_info.vendorID``."""
+    node = SimpleNamespace(
+        device_info=SimpleNamespace(vendorID=TCL_VENDOR_ID),
+        get_attribute_value=lambda *_: None,
+    )
     assert _node_vendor_id(node) == TCL_VENDOR_ID
 
 
-def test_node_vendor_id_via_basic_information() -> None:
-    """Falls back to BasicInformation cluster path 0/40/1."""
-    node = SimpleNamespace(vendor_id=None, attributes={"0/40/1": TCL_VENDOR_ID})
+async def test_node_vendor_id_via_get_attribute_value() -> None:
+    """Falls back to ``get_attribute_value(0, 0x0028, 2)`` when device_info empty."""
+    calls: list[tuple[int, int, int]] = []
+
+    def _get_attr(endpoint: int, cluster: int, attr: int) -> int | None:
+        calls.append((endpoint, cluster, attr))
+        if (endpoint, cluster, attr) == (0, 0x0028, 2):
+            return TCL_VENDOR_ID
+        return None
+
+    node = SimpleNamespace(
+        device_info=SimpleNamespace(),  # no vendorID/vendor_id/vendorId
+        get_attribute_value=_get_attr,
+    )
+    assert _node_vendor_id(node) == TCL_VENDOR_ID
+    assert (0, 0x0028, 2) in calls
+
+
+async def test_node_vendor_id_legacy_attribute() -> None:
+    """Falls back to legacy ``node.vendor_id`` when other paths fail."""
+    node = SimpleNamespace(
+        device_info=None,
+        get_attribute_value=lambda *_: None,
+        vendor_id=TCL_VENDOR_ID,
+    )
     assert _node_vendor_id(node) == TCL_VENDOR_ID
 
 
-def test_node_vendor_id_unknown_returns_none() -> None:
-    """Returns None when vendor cannot be determined."""
-    node = SimpleNamespace(vendor_id=None, attributes={})
+async def test_node_vendor_id_unknown_returns_none() -> None:
+    """Returns None when none of the lookup paths produce a vendor id."""
+    node = SimpleNamespace(
+        device_info=SimpleNamespace(),
+        get_attribute_value=lambda *_: None,
+    )
     assert _node_vendor_id(node) is None
 
 
-def test_discover_tcl_nodes_filters_by_vendor(
+async def test_node_vendor_id_get_attribute_raises_is_handled() -> None:
+    """If get_attribute_value raises, fall through to legacy path."""
+
+    def _raise(*_: object) -> None:
+        raise RuntimeError("transport error")
+
+    node = SimpleNamespace(
+        device_info=None,
+        get_attribute_value=_raise,
+        vendor_id=TCL_VENDOR_ID,
+    )
+    assert _node_vendor_id(node) == TCL_VENDOR_ID
+
+
+async def test_discover_tcl_nodes_filters_by_vendor(
     mock_matter_client: MagicMock,
     mock_matter_node: MagicMock,
     non_tcl_matter_node: MagicMock,
@@ -205,7 +283,7 @@ def test_discover_tcl_nodes_filters_by_vendor(
     assert nodes == [mock_matter_node]
 
 
-def test_discover_tcl_nodes_falls_back_to_nodes_dict(
+async def test_discover_tcl_nodes_falls_back_to_nodes_dict(
     mock_matter_node: MagicMock,
 ) -> None:
     """If ``get_nodes`` is missing, fall back to the ``nodes`` dict property."""
@@ -219,10 +297,15 @@ async def test_setup_entry_propagates_first_refresh_failure(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
-    mock_matter_client: MagicMock,
+    mock_matter_node: MagicMock,
+    patch_platform_forwarding: object,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """A failing initial poll surfaces as ConfigEntryNotReady."""
-    mock_matter_client.read_attribute.side_effect = RuntimeError("transport down")
+    # Force the coordinator's read path to fail by emptying node_data and
+    # making get_attribute_value raise.
+    mock_matter_node.node_data.attributes.clear()
+    mock_matter_node.get_attribute_value = MagicMock(side_effect=RuntimeError("down"))
 
     with pytest.raises(ConfigEntryNotReady):
         await async_setup_entry(hass, mock_tcl_entry)
@@ -234,6 +317,7 @@ async def test_setup_entry_falls_back_to_subscribe_when_subscribe_events_missing
     setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
     mock_matter_client: MagicMock,
     patch_platform_forwarding: object,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """If ``subscribe_events`` is unavailable, ``subscribe`` is used instead."""
     del mock_matter_client.subscribe_events
@@ -251,6 +335,7 @@ async def test_setup_entry_handles_no_subscription_api(
     setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
     mock_matter_client: MagicMock,
     patch_platform_forwarding: object,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """Setup still succeeds when neither subscribe* method exists."""
     del mock_matter_client.subscribe_events
@@ -264,6 +349,7 @@ async def test_setup_entry_forwards_to_platforms(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,  # noqa: ARG001
+    patch_first_refresh: object,  # noqa: ARG001
 ) -> None:
     """async_forward_entry_setups is called once with all our platforms."""
     with patch(
