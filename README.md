@@ -42,7 +42,9 @@ Copy `custom_components/tcl_matter/` into your `<config>/custom_components/` dir
 
 This integration **requires the device to already be paired via the built-in Matter integration**. The pairing code is on a sticker on the unit (look for the Matter `∗` logo + 11-digit code).
 
-> ⚠️ TCL Matter devices require **IPv6 routing** on your LAN. If pairing fails with "Network unreachable" in the Matter Server addon log, configure a ULA prefix (`fd00::/8`) on the network where Home Assistant lives. UniFi: Settings → Networks → IPv6 → Static + ULA address + SLAAC + RA.
+> ⚠️ **Matter requires IPv6 routing on your LAN.** This is a Matter spec requirement, not specific to TCL. If pairing fails with `Network is unreachable` in the Matter Server addon log, your network is IPv4-only and Matter cannot operate. The fix is to enable IPv6 on every VLAN that needs to reach Matter devices — typically with a ULA prefix from `fd00::/8` plus SLAAC + Router Advertisements. Most consumer routers support this (look for "IPv6 LAN" / "Local IPv6" / "ULA" settings); see your router's documentation. If your router only supports DHCP-PD from your ISP and your ISP doesn't provide IPv6, you can still configure a static ULA prefix locally.
+
+> ⚠️ **mDNS must reach across VLANs.** If Home Assistant and your Matter device are on different VLANs, ensure your router has an mDNS reflector / repeater enabled and that inter-VLAN ICMPv6 (Neighbor Discovery) is permitted. Without these, Matter discovery silently fails.
 
 ## Tested devices
 
