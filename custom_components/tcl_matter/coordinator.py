@@ -122,7 +122,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
             for attr_id in range(7):
                 try:
                     value = get_attr(1, TCL_CLUSTER_FC03, attr_id)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 if value is not None:
                     out[attr_id] = value

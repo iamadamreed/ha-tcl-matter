@@ -116,7 +116,7 @@ def _node_vendor_id(node: Any) -> int | None:
     if callable(get_attr):
         try:
             value = get_attr(0, 0x0028, 2)  # BasicInformation, VendorID
-        except Exception:  # noqa: BLE001
+        except Exception:
             value = None
         if value is not None:
             try:
@@ -240,7 +240,7 @@ def _attach_push_subscription(
         """Handle a push attribute update from the matter client."""
         try:
             coordinator.handle_push_event(event, data)
-        except Exception:  # noqa: BLE001
+        except Exception:
             LOGGER.exception("Error handling matter push event")
 
     # Try modern signature: subscribe_events(callback, event_filter=...)
@@ -282,7 +282,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -
     for unsub in runtime.unsubscribers:
         try:
             unsub()
-        except Exception:  # noqa: BLE001
+        except Exception:
             LOGGER.debug("Error unsubscribing matter listener", exc_info=True)
     runtime.unsubscribers.clear()
 

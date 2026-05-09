@@ -152,7 +152,7 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
         except TypeError:
             try:
                 await write(self._node_id, path, value)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 LOGGER.exception(
                     "write_attribute failed for node=%s path=%s value=%r",
                     self._node_id,
