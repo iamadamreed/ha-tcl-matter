@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up TCL Matter",
+        "description": "TCL Matter decodes vendor-specific Matter clusters used by TCL dehumidifiers. The integration auto-discovers TCL devices already commissioned to your Matter fabric — no input is needed."
+      }
+    },
+    "abort": {
+      "already_configured": "TCL Matter is already configured."
+    }
+  },
+  "entity": {
+    "humidifier": {
+      "tcl_dehumidifier": {
+        "name": "Dehumidifier",
+        "state_attributes": {
+          "mode": {
+            "state": {
+              "set": "Set",
+              "continue": "Continue",
+              "comfort": "Comfort",
+              "smart": "Smart",
+              "dry": "Dry"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "current_humidity": {
+        "name": "Current humidity"
+      },
+      "error_codes": {
+        "name": "Error codes"
+      }
+    },
+    "binary_sensor": {
+      "bucket_full": {
+        "name": "Water bucket full"
+      },
+      "filter_alert": {
+        "name": "Filter alert"
+      }
+    },
+    "select": {
+      "mode": {
+        "name": "Mode",
+        "state": {
+          "set": "Set",
+          "continue": "Continue",
+          "comfort": "Comfort",
+          "smart": "Smart",
+          "dry": "Dry"
+        }
+      }
+    }
+  }
+}
