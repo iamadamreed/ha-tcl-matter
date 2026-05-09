@@ -9,9 +9,9 @@
 ## Bottom line
 
 - **Goal:** Get the TCL H50D44W dehumidifier fully integrated with HA for mold prevention — bucket-full alerts, tamper self-healing, full read/write of target humidity + mode. Build it RIGHT, no legacy/maintenance shortcuts.
-- **State today:** Reads work end-to-end. Writes silently no-op. Notifications and offline detection are live. Tampering detection alerts work; auto-restore is staged but commented out.
-- **Blocked on:** Upstream [matter-js/matterjs-server PR #630](https://github.com/matter-js/matterjs-server/pull/630) to register TLV types for TCL vendor cluster `0x1334FC03`. Until merged + propagated to the HA addon, write_attribute can't serialize.
-- **Next concrete step:** Fix two missing helpers (`input_number.dehumidifier_target_humidity`, `input_select.dehumidifier_mode`) so the tampering automation's templates resolve. Then wait on PR #630.
+- **State today:** Reads work end-to-end via matter.js. All read-side automations live (bucket-full alerts persistent every 30 min, offline detection, tampering detection, AC dehumidify demoted to backup). Writes silently no-op pending upstream PR.
+- **Blocked on:** Upstream [matter-js/matterjs-server PR #630](https://github.com/matter-js/matterjs-server/pull/630) to register TLV types for TCL vendor cluster `0x1334FC03`. Until merged + propagated to the HA addon, write_attribute can't serialize. PR is OPEN, MERGEABLE, no review activity yet.
+- **Next concrete step:** Wait on PR #630. When it merges → matter-server npm release → HA addon image build (~1 week total) → writes start working with no integration code changes. At that point: enable the auto-restore action in `mold_prevention_dehumidifier_tampered`, end-to-end test that physical-button changes get reverted by HA.
 
 ---
 
@@ -57,26 +57,14 @@ Adam's directive: *"we are NOT aiming for a legacy or maintenance integration, b
 |---|---|
 | `mold_prevention_dehumidifier_bucket_full` | Repeats every 30 min while bucket sensor is on |
 | `mold_prevention_dehumidifier_offline` | Notify after 10 min unavailable |
-| `mold_prevention_dehumidifier_tampered` | Alerts when target≠45 or mode≠'set'. **Auto-restore actions commented out** pending PR #630 |
+| `mold_prevention_dehumidifier_tampered` | Alerts when target≠45 or mode∉{'set','continue'}. Hardcoded thresholds (helpers approach was scrapped). Auto-restore activates after PR #630 |
 | `mold_prevention_ac_dehumidify` | **Demoted** — only fires if TCL is unavailable >5 min |
 
 ---
 
-## 3. Open known issue — helpers missing
+## 3. Resolved — helpers approach scrapped
 
-Two `input_*` helpers failed to create via the REST API (returned 404):
-
-- `input_number.dehumidifier_target_humidity`
-- `input_select.dehumidifier_mode`
-
-**Why:** the user-helper REST API likely requires the integration to be enabled via `configuration.yaml` or via the UI helpers flow.
-
-**Impact:** the tampering automation references these, so its templates currently resolve to `unknown` / template-error and the automation may not fire as expected.
-
-**Fix paths (pick one):**
-1. Hardcode `45` and `'set'` directly in the automation template, OR
-2. Create the helpers via Settings → Devices & Services → Helpers UI, OR
-3. Use the WebSocket API `config_entries/flow` flow to create them.
+Originally planned `input_number.dehumidifier_target_humidity` + `input_select.dehumidifier_mode` helpers to make the canonical target/mode user-configurable. The REST API for user helpers returned 404 and rather than fight that, the tampering automation now hardcodes `45%` and accepts modes `set` or `continue` directly in the template. Adam can edit those values inline if he wants different canonical setpoints — small enough to not need helper plumbing.
 
 ---
 
@@ -86,12 +74,12 @@ Two `input_*` helpers failed to create via the REST API (returned 404):
 |---|---|---|---|
 | `ha-tcl-matter` | https://github.com/iamadamreed/ha-tcl-matter | `/Users/smarter/dev/family/house/2504canyonbay/integrations/ha-tcl-matter/` | Custom HA integration. Public, MIT, **v0.1.0** released. **112 tests passing at 89% coverage.** |
 | `matterjs-server` (fork) | https://github.com/iamadamreed/matterjs-server | `/Users/smarter/dev/family/house/2504canyonbay/integrations/matterjs-server/` | Branch `add-tcl-vendor-cluster` — source of PR #630 |
-| `python-matter-server` (fork) | https://github.com/iamadamreed/python-matter-server | `/Users/smarter/dev/family/house/2504canyonbay/integrations/python-matter-server/` | **Legacy, NOT in use.** Forked before we discovered upstream had moved to matter.js |
+| `python-matter-server` (fork) | https://github.com/iamadamreed/python-matter-server | (deleted locally, **archived on GitHub**) | Forked before we discovered upstream had moved to matter.js. Archived as part of legacy cleanup. |
 
 ### CI status (ha-tcl-matter)
-- **Test workflow:** passing.
-- **Lint (ruff):** failing — `S101` (assert in tests) needs allowlist.
-- **Validate (hassfest + HACS):** failing — HACS topics missing from repo metadata.
+- ✅ **Test workflow:** passing (112 tests, 89% coverage).
+- ✅ **Lint (ruff):** passing — only formatter-incompat + ANN401 ignored; the 36 real warnings were FIXED (named constants, message-to-variable for raises, narrowed excepts) not silenced.
+- ✅ **Validate (hassfest + HACS):** passing — repo topics added (`home-assistant`, `homeassistant`, `hacs`, `matter`, `tcl`, `dehumidifier`, `iot`, `home-automation`, `python`).
 
 ---
 
