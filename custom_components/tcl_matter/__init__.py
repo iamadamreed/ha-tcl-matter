@@ -156,7 +156,11 @@ def _discover_tcl_nodes(matter_client: Any) -> list[Any]:
         vid = _node_vendor_id(node)
         nid = getattr(node, "node_id", None)
         if vid == TCL_VENDOR_ID:
-            LOGGER.info("TCL Matter node discovered: node_id=%s vendor_id=0x%04X", nid, vid)
+            LOGGER.info(
+                "TCL Matter node discovered: node_id=%s vendor_id=0x%04X",
+                nid,
+                vid,
+            )
             nodes.append(node)
         else:
             LOGGER.debug("Skipping non-TCL node node_id=%s vendor_id=%s", nid, vid)
