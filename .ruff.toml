@@ -23,3 +23,13 @@ keep-runtime-typing = true
 
 [lint.mccabe]
 max-complexity = 25
+
+[lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",   # `assert` is the standard idiom in pytest
+    "SLF001", # tests routinely poke private state to set up fixtures
+    "PLR2004", # magic numbers are inherent to assertions
+    "ARG001",  # unused arg in fixture-injected parameters
+    "ARG002",
+    "D",       # docstrings on every test function add noise without value
+]
