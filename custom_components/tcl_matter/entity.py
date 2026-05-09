@@ -18,6 +18,24 @@ if TYPE_CHECKING:
     from .coordinator import TclMatterCoordinator
 
 
+def _node_basic_info(coordinator: TclMatterCoordinator, node_id: int) -> dict[str, Any]:
+    """Return BasicInformation fields (vendor, product, etc.) for a node."""
+    device = coordinator._devices.get(node_id)  # noqa: SLF001
+    if device is None:
+        return {}
+    info = getattr(device.node, "device_info", None)
+    if info is None:
+        return {}
+    return {
+        "vendor_name": getattr(info, "vendorName", None),
+        "vendor_id": getattr(info, "vendorID", None),
+        "product_name": getattr(info, "productName", None),
+        "product_id": getattr(info, "productID", None),
+        "hw_version": getattr(info, "hardwareVersionString", None),
+        "sw_version": getattr(info, "softwareVersionString", None),
+    }
+
+
 class TclMatterEntity(CoordinatorEntity["TclMatterCoordinator"]):
     """Base class for all TCL Matter entities."""
 
@@ -33,9 +51,16 @@ class TclMatterEntity(CoordinatorEntity["TclMatterCoordinator"]):
         super().__init__(coordinator)
         self._node_id = node_id
         self._attr_unique_id = f"{DOMAIN}_{node_id}_{unique_id_suffix}"
+
+        info = _node_basic_info(coordinator, node_id)
         self._attr_device_info = DeviceInfo(
             # Reuse the matter integration's identifier so HA merges devices.
             identifiers={(MATTER_DOMAIN, str(node_id))},
+            name=info.get("product_name") or "TCL Dehumidifier",
+            manufacturer=info.get("vendor_name") or "TCL",
+            model=info.get("product_name") or "TCL Dehumidifier",
+            hw_version=info.get("hw_version"),
+            sw_version=info.get("sw_version"),
         )
 
     @property

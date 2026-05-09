@@ -52,7 +52,8 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
     async def _async_update_data(self) -> dict[int, dict[int, Any]]:
         """Poll cluster 0x1334FC03 for every known TCL node."""
         snapshot: dict[int, dict[int, Any]] = {
-            node_id: dict(device.attributes) for node_id, device in self._devices.items()
+            node_id: dict(device.attributes)
+            for node_id, device in self._devices.items()
         }
 
         for node_id, device in self._devices.items():
@@ -72,25 +73,61 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         return snapshot
 
     async def _read_cluster(self, node_id: int) -> dict[int, Any]:
-        """Wildcard-read cluster 0x1334FC03 for ``node_id``.
+        """Read all known attributes of cluster 0x1334FC03 for ``node_id``.
 
-        The python-matter-server ``read_attribute`` method accepts a path
-        string of the form ``"<endpoint>/<cluster>/<attr>"`` where ``*`` is
-        a wildcard. We always read endpoint 1 (the appliance endpoint).
+        Uses ``node.get_attribute_value(endpoint, cluster_id, attribute_id)``
+        which returns the live cached value the matter-server already
+        subscribes to — no extra Matter round trip needed.
+
+        We enumerate the 7 known attribute IDs (0-6) on cluster 0x1334FC03
+        rather than wildcard-walking, so the response is always a clean
+        ``{attr_id: value}`` dict.
         """
-        path = f"1/{TCL_CLUSTER_FC03}/*"
-        read_attribute = getattr(self._matter_client, "read_attribute", None)
-        if not callable(read_attribute):
-            msg = "matter_client has no read_attribute()"
-            raise UpdateFailed(msg)
+        device = self._devices.get(node_id)
+        if device is None:
+            raise UpdateFailed(f"unknown node_id {node_id}")
 
-        try:
-            result = await read_attribute(node_id=node_id, attribute_path=path)
-        except TypeError:
-            # Some versions take positional args
-            result = await read_attribute(node_id, path)
+        node = device.node
+        get_attr = getattr(node, "get_attribute_value", None)
+        if not callable(get_attr):
+            raise UpdateFailed("MatterNode has no get_attribute_value() method")
 
-        return self._normalize_read_result(result)
+        out: dict[int, Any] = {}
+
+        # Primary: read from node.node_data.attributes (raw dict from matter-server).
+        # This is the only path that works for vendor-specific clusters because
+        # MatterNode.get_attribute_value() relies on a cluster registry that
+        # python-matter-server doesn't ship with TCL definitions yet (until
+        # the upstream cluster decoder PR lands).
+        node_data = getattr(node, "node_data", None)
+        raw_attrs = getattr(node_data, "attributes", None) if node_data else None
+        if isinstance(raw_attrs, dict):
+            prefix = f"1/{TCL_CLUSTER_FC03}/"
+            for path, value in raw_attrs.items():
+                if not isinstance(path, str) or not path.startswith(prefix):
+                    continue
+                attr_str = path[len(prefix):]
+                try:
+                    attr_id = int(attr_str)
+                except ValueError:
+                    continue
+                # only keep our known data attrs (0..6); skip cluster metadata
+                if 0 <= attr_id < 7:
+                    out[attr_id] = value
+
+        # Fallback: get_attribute_value (works once a cluster decoder is registered).
+        if not out:
+            for attr_id in range(7):
+                try:
+                    value = get_attr(1, TCL_CLUSTER_FC03, attr_id)
+                except Exception:  # noqa: BLE001
+                    continue
+                if value is not None:
+                    out[attr_id] = value
+
+        if not out:
+            raise UpdateFailed("no attributes readable from cluster 0x1334FC03")
+        return out
 
     @staticmethod
     def _normalize_read_result(result: Any) -> dict[int, Any]:
@@ -115,7 +152,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
 
             # Nested form: drill down to attr-keyed dict
             if isinstance(value, dict):
-                # value might be {endpoint: {cluster: {attr: v}}} or {cluster: {attr: v}}
+                # value: {endpoint: {cluster: {attr: v}}} or {cluster: {attr: v}}
                 for inner in _walk_to_attr_dict(value):
                     for attr_id, attr_val in inner.items():
                         try:

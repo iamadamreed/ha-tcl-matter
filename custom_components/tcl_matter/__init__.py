@@ -89,25 +89,44 @@ def _get_matter_client(hass: HomeAssistant) -> Any | None:
 
 
 def _node_vendor_id(node: Any) -> int | None:
-    """Extract the vendor ID from a matter node, tolerating API variants."""
-    # Direct attribute (newer python-matter-server versions)
+    """Extract the vendor ID from a matter node, tolerating API variants.
+
+    Tries (in order):
+      1. ``node.device_info.vendorID`` — python-matter-server 5.x decoded form
+      2. ``node.get_attribute_value(0, 0x0028, 2)`` — BasicInformation/VendorID
+      3. Direct ``node.vendor_id`` attribute (older versions)
+    """
+    # Path 1: BasicInformation dataclass on the node
+    device_info = getattr(node, "device_info", None)
+    if device_info is not None:
+        for field_name in ("vendorID", "vendor_id", "vendorId"):
+            value = getattr(device_info, field_name, None)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    pass
+
+    # Path 2: get_attribute_value(endpoint, cluster, attribute)
+    get_attr = getattr(node, "get_attribute_value", None)
+    if callable(get_attr):
+        try:
+            value = get_attr(0, 0x0028, 2)  # BasicInformation, VendorID
+        except Exception:  # noqa: BLE001
+            value = None
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+
+    # Path 3: legacy direct attribute
     vendor_id = getattr(node, "vendor_id", None)
     if vendor_id is not None:
         try:
             return int(vendor_id)
         except (TypeError, ValueError):
             pass
-
-    # Fall back to BasicInformation cluster on endpoint 0, attr 1 (VendorID)
-    try:
-        attributes = getattr(node, "attributes", {}) or {}
-        # Path strings used by python-matter-server are "endpoint/cluster/attr"
-        # BasicInformation cluster id = 0x0028 (40); VendorID attr = 1
-        for path, value in attributes.items():
-            if isinstance(path, str) and path == "0/40/1":
-                return int(value)
-    except (TypeError, ValueError, AttributeError):
-        LOGGER.debug("Could not extract vendor_id via attributes for node")
 
     return None
 
@@ -120,14 +139,23 @@ def _discover_tcl_nodes(matter_client: Any) -> list[Any]:
         try:
             raw_nodes = list(get_nodes())
         except TypeError:
-            # Some versions expose .nodes as a property/dict
             raw_nodes = list(getattr(matter_client, "nodes", {}).values())
     else:
         raw_nodes = list(getattr(matter_client, "nodes", {}).values())
 
+    LOGGER.debug(
+        "TCL discovery: matter_client type=%s, %d nodes found",
+        type(matter_client).__name__,
+        len(raw_nodes),
+    )
     for node in raw_nodes:
-        if _node_vendor_id(node) == TCL_VENDOR_ID:
+        vid = _node_vendor_id(node)
+        nid = getattr(node, "node_id", None)
+        if vid == TCL_VENDOR_ID:
+            LOGGER.info("TCL Matter node discovered: node_id=%s vendor_id=0x%04X", nid, vid)
             nodes.append(node)
+        else:
+            LOGGER.debug("Skipping non-TCL node node_id=%s vendor_id=%s", nid, vid)
     return nodes
 
 
@@ -233,10 +261,12 @@ def _attach_push_subscription(
         except TypeError:
             LOGGER.debug("subscribe signature differs; falling through")
 
+    interval = coordinator.update_interval
+    poll_secs = interval.total_seconds() if interval else 30
     LOGGER.info(
         "Matter client does not expose a compatible subscription API; "
         "TCL Matter will rely on %ds polling",
-        coordinator.update_interval.total_seconds() if coordinator.update_interval else 30,
+        poll_secs,
     )
 
 
