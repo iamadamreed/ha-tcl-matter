@@ -2,12 +2,25 @@
 Humidifier platform for TCL Matter dehumidifiers.
 
 Exposes a single :class:`TclDehumidifier` per discovered TCL node. The
-target humidity (attr 1) and operating mode (attr 0) are written back
-to the device through the matter client's ``write_attribute`` API.
+target humidity (attr 1) and operating mode (attr 0) are written back to
+the device through ``matter_ws.live_write_attribute``, which talks to the
+matter-server WebSocket directly so the vendor cluster decoder (matter-js
+PR #630 / iamadamreed/addons fork) handles the wire format.
+
+Two safety measures live in this module to prevent runaway write loops:
+
+* **Per-attribute :class:`asyncio.Lock`** — serialises concurrent writes
+  to the same attribute, so a tampered + auto-restore double-fire cannot
+  interleave.
+* **Write deduplication** — under the lock, compares the requested value
+  to the cached value and skips the round trip when they match. Breaks
+  the flap loop that would otherwise occur if a stale push event re-
+  triggered an automation that wrote the same value back.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.humidifier import (
@@ -29,6 +42,7 @@ from .const import (
     TCL_CLUSTER_FC03,
 )
 from .entity import TclMatterEntity
+from .matter_ws import live_write_attribute
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -71,6 +85,9 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
         """Initialize the dehumidifier entity."""
         super().__init__(coordinator, node_id, "dehumidifier")
         self._matter_client = matter_client
+        # One lock per attribute id; created lazily so we don't carry empty
+        # lock objects for attrs we never write.
+        self._write_locks: dict[int, asyncio.Lock] = {}
 
     @property
     def is_on(self) -> bool:
@@ -128,96 +145,54 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
             return
         await self._write_attr(ATTR_MODE, MODE_NAME_MAP[mode])
 
+    def _lock_for(self, attr_id: int) -> asyncio.Lock:
+        """Return (lazily-created) write lock for ``attr_id``."""
+        lock = self._write_locks.get(attr_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._write_locks[attr_id] = lock
+        return lock
+
     async def _write_attr(self, attr_id: int, value: Any) -> None:
         """
         Write a TCL vendor cluster attribute on the device.
 
-        First tries the HA matter client's typed `write_attribute`. The
-        matter-python-client library validates attribute paths against its
-        cluster registry; vendor clusters that aren't pre-registered raise
-        "Attribute X on cluster Y unknown". When that happens we fall back to
-        a direct WebSocket send to the matter-server addon, which (with the
-        cluster decoder loaded server-side) accepts the write.
-
-        Both paths converge on the matter-server addon; the fallback just
-        skips the client-side schema check.
+        Acquires the per-attribute lock, dedupes against the cached value,
+        then issues a live write through the matter-server WebSocket. On
+        success, the local cache is optimistically updated so the UI
+        reflects the change without waiting for the next poll/push.
         """
         path = f"1/{TCL_CLUSTER_FC03}/{attr_id}"
-        wrote = await self._write_via_client(path, value)
-        if not wrote:
-            wrote = await self._write_via_direct_ws(path, value)
-        if not wrote:
-            LOGGER.error(
-                "write_attribute failed via both paths for node=%s path=%s value=%r",
-                self._node_id,
-                path,
-                value,
-            )
-            return
-        # Optimistically update local cache so the UI reflects the change
-        # without waiting for the next push/poll.
-        self.coordinator._devices[self._node_id].attributes[attr_id] = value  # noqa: SLF001
-        snapshot = dict(self.coordinator.data or {})
-        snapshot.setdefault(self._node_id, {})[attr_id] = value
-        self.coordinator.async_set_updated_data(snapshot)
-
-    async def _write_via_client(self, path: str, value: Any) -> bool:
-        """Try the HA matter client's typed write_attribute. Returns True on success."""
-        write = getattr(self._matter_client, "write_attribute", None)
-        if not callable(write):
-            return False
-        try:
-            await write(node_id=self._node_id, attribute_path=path, value=value)
-        except TypeError:
-            try:
-                await write(self._node_id, path, value)
-            except Exception as err:  # noqa: BLE001
-                LOGGER.debug("client positional write failed: %s", err)
-                return False
-        # The matter-python-client raises ValueError on unknown vendor attrs
-        # before sending. Catch broadly because the upstream error type isn't
-        # stable across releases.
-        except Exception as err:  # noqa: BLE001
-            LOGGER.debug(
-                "client write rejected for %s; falling back to direct WS: %s",
-                path,
-                err,
-            )
-            return False
-        return True
-
-    async def _write_via_direct_ws(self, path: str, value: Any) -> bool:
-        """
-        Send write_attribute directly to the matter-server addon's WS.
-
-        Bypasses the HA client's local cluster-registry check. The addon
-        ships the TCL cluster decoder so the wire format succeeds.
-        """
-        import aiohttp  # noqa: PLC0415 — local-only fallback path
-
-        url = "ws://core-matter-server:5580/ws"
-        try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.ws_connect(url, timeout=10) as ws,
-            ):
-                await ws.receive_json()  # server hello
-                await ws.send_json(
-                    {
-                        "message_id": "tcl_write",
-                        "command": "write_attribute",
-                        "args": {
-                            "node_id": self._node_id,
-                            "attribute_path": path,
-                            "value": value,
-                        },
-                    }
+        async with self._lock_for(attr_id):
+            current = self._node_data.get(attr_id)
+            if current == value:
+                LOGGER.debug(
+                    "write dedup: node=%s attr=%s already %r — skipping",
+                    self._node_id,
+                    attr_id,
+                    value,
                 )
-                msg = await ws.receive_json(timeout=10)
-                if msg.get("error_code") or msg.get("error"):
-                    LOGGER.warning("direct WS write failed: %s", msg)
-                    return False
-                return True
-        except Exception as err:  # noqa: BLE001
-            LOGGER.warning("direct WS write to matter-server failed: %s", err)
-            return False
+                return
+
+            try:
+                await live_write_attribute(
+                    self._matter_client, self._node_id, path, value
+                )
+            # Defensive: the matter-server raises an open-ended set of
+            # exception types for transport, validation, and device-side
+            # errors. Logging here is the right place; callers shouldn't
+            # have to wrap every set_humidity/set_mode call in try/except.
+            except Exception as err:  # noqa: BLE001
+                LOGGER.error(
+                    "live write failed: node=%s path=%s value=%r err=%s",
+                    self._node_id,
+                    path,
+                    value,
+                    err,
+                )
+                return
+
+            self.coordinator._devices[self._node_id].attributes[attr_id] = value  # noqa: SLF001
+            snapshot = dict(self.coordinator.data or {})
+            snapshot.setdefault(self._node_id, {})[attr_id] = value
+            self.coordinator.async_set_updated_data(snapshot)

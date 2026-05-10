@@ -2,13 +2,14 @@
 Select platform for TCL Matter dehumidifiers.
 
 Mirrors the humidifier's mode attribute as a standalone select entity.
-This is convenient for users who want to bind mode to a dashboard tile
-or trigger automations off mode changes without going through the
-humidifier entity.
+This is convenient for users who want to bind mode to a dashboard tile or
+trigger automations off mode changes without going through the humidifier
+entity.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.select import SelectEntity
@@ -22,6 +23,7 @@ from .const import (
     TCL_CLUSTER_FC03,
 )
 from .entity import TclMatterEntity
+from .matter_ws import live_write_attribute
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -60,6 +62,7 @@ class TclModeSelect(TclMatterEntity, SelectEntity):
         """Initialize the mode selector."""
         super().__init__(coordinator, node_id, "mode")
         self._matter_client = matter_client
+        self._write_lock = asyncio.Lock()
 
     @property
     def current_option(self) -> str | None:
@@ -77,28 +80,35 @@ class TclModeSelect(TclMatterEntity, SelectEntity):
         if option not in MODE_NAME_MAP:
             LOGGER.warning("Unknown TCL mode requested via select: %s", option)
             return
-        path = f"1/{TCL_CLUSTER_FC03}/{ATTR_MODE}"
-        write = getattr(self._matter_client, "write_attribute", None)
-        if not callable(write):
-            LOGGER.error("matter_client has no write_attribute(); cannot push mode")
-            return
 
-        value = MODE_NAME_MAP[option]
-        try:
-            await write(node_id=self._node_id, attribute_path=path, value=value)
-        except TypeError:
-            try:
-                await write(self._node_id, path, value)
-            # Defensive: matter-server APIs raise inconsistent types across versions.
-            except Exception:  # noqa: BLE001
-                LOGGER.exception(
-                    "write_attribute failed for node=%s mode=%s",
+        target = MODE_NAME_MAP[option]
+        path = f"1/{TCL_CLUSTER_FC03}/{ATTR_MODE}"
+
+        async with self._write_lock:
+            current = self._node_data.get(ATTR_MODE)
+            if current == target:
+                LOGGER.debug(
+                    "select dedup: node=%s mode already %r — skipping",
                     self._node_id,
                     option,
                 )
                 return
 
-        self.coordinator._devices[self._node_id].attributes[ATTR_MODE] = value  # noqa: SLF001
-        snapshot = dict(self.coordinator.data or {})
-        snapshot.setdefault(self._node_id, {})[ATTR_MODE] = value
-        self.coordinator.async_set_updated_data(snapshot)
+            try:
+                await live_write_attribute(
+                    self._matter_client, self._node_id, path, target
+                )
+            # Defensive: matter-server raises an open-ended set of types.
+            except Exception as err:  # noqa: BLE001
+                LOGGER.error(
+                    "live mode write failed: node=%s option=%s err=%s",
+                    self._node_id,
+                    option,
+                    err,
+                )
+                return
+
+            self.coordinator._devices[self._node_id].attributes[ATTR_MODE] = target  # noqa: SLF001
+            snapshot = dict(self.coordinator.data or {})
+            snapshot.setdefault(self._node_id, {})[ATTR_MODE] = target
+            self.coordinator.async_set_updated_data(snapshot)

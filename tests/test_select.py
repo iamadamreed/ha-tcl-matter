@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -60,7 +60,7 @@ async def test_async_select_option_writes_correct_value(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """A known option writes the matching integer to the mode path."""
+    """A known option calls ``write_attribute`` with the matching integer."""
     select = TclModeSelect(primed_coordinator, mock_matter_client, NODE_ID)
     await select.async_select_option("smart")
     mock_matter_client.write_attribute.assert_awaited_once_with(
@@ -93,34 +93,29 @@ async def test_async_select_option_unknown_logs_warning(
     assert any("Unknown TCL mode" in rec.message for rec in caplog.records)
 
 
-async def test_async_select_option_falls_back_to_positional(
+async def test_select_dedup_skips_when_already_at_value(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """Positional fallback is exercised when kwargs raise TypeError."""
-    calls: list[Any] = []
-
-    async def _write(*args: Any, **kwargs: Any) -> None:
-        calls.append((args, kwargs))
-        if kwargs:
-            msg = "kwargs not supported"
-            raise TypeError(msg)
-
-    mock_matter_client.write_attribute = AsyncMock(side_effect=_write)
+    """Selecting the option that already matches the cache does NOT round-trip."""
     select = TclModeSelect(primed_coordinator, mock_matter_client, NODE_ID)
-    await select.async_select_option("comfort")
+    # primed cache has ATTR_MODE = 0 (set).
+    await select.async_select_option("set")
+    mock_matter_client.write_attribute.assert_not_called()
 
-    assert len(calls) == 2
-    assert calls[1][0] == (NODE_ID, EXPECTED_MODE_PATH, 2)
 
-
-async def test_async_select_option_missing_write_attribute(
+async def test_select_logs_error_on_write_failure(
     primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A matter client without write_attribute logs an error and no-ops."""
-    bad_client = MagicMock(spec=[])
-    select = TclModeSelect(primed_coordinator, bad_client, NODE_ID)
+    """A failing write logs at error and leaves the cache untouched."""
+    mock_matter_client.write_attribute = AsyncMock(side_effect=RuntimeError("boom"))
+    select = TclModeSelect(primed_coordinator, mock_matter_client, NODE_ID)
+    before = primed_coordinator.data[NODE_ID][ATTR_MODE]
+
     with caplog.at_level(logging.ERROR, logger="custom_components.tcl_matter"):
         await select.async_select_option("comfort")
-    assert any("write_attribute" in rec.message for rec in caplog.records)
+
+    assert primed_coordinator.data[NODE_ID][ATTR_MODE] == before
+    assert any("live mode write failed" in rec.message for rec in caplog.records)

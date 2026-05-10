@@ -296,15 +296,16 @@ async def test_setup_entry_propagates_first_refresh_failure(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
-    mock_matter_node: MagicMock,
+    mock_matter_client: MagicMock,
     patch_platform_forwarding: object,
     patch_first_refresh: object,
 ) -> None:
-    """A failing initial poll surfaces as ConfigEntryNotReady."""
-    # Force the coordinator's read path to fail by emptying node_data and
-    # making get_attribute_value raise.
-    mock_matter_node.node_data.attributes.clear()
-    mock_matter_node.get_attribute_value = MagicMock(side_effect=RuntimeError("down"))
+    """A failing initial poll surfaces as ConfigEntryNotReady.
+
+    The coordinator now reads via ``matter_client.read_attribute``; making
+    that raise is the modern way to simulate a downed matter-server.
+    """
+    mock_matter_client.read_attribute = AsyncMock(side_effect=RuntimeError("down"))
 
     with pytest.raises(ConfigEntryNotReady):
         await async_setup_entry(hass, mock_tcl_entry)

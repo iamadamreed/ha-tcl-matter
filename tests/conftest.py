@@ -143,19 +143,34 @@ def mock_matter_client(
     mock_matter_node: MagicMock,
     default_node_attributes: dict[int, Any],
 ) -> MagicMock:
-    """Return a fake MatterClient with the methods our integration uses."""
+    """
+    Return a fake MatterClient with the methods our integration uses.
+
+    ``read_attribute`` returns a flat path-keyed dict for cluster FC03.
+    ``write_attribute`` mutates the same backing dict so a subsequent read
+    sees the new value — mimicking the matter-server's behaviour where a
+    push subscription would deliver the updated value back.
+    """
     client = MagicMock(name="MatterClient")
 
     # get_nodes returns an iterable of node objects.
     client.get_nodes = MagicMock(return_value=[mock_matter_node])
 
-    # read_attribute returns the flat-path response shape for cluster FC03.
     flat_response = {
         f"1/{TCL_CLUSTER_FC03}/{attr_id}": value
         for attr_id, value in default_node_attributes.items()
     }
-    client.read_attribute = AsyncMock(return_value=flat_response)
-    client.write_attribute = AsyncMock(return_value=None)
+
+    async def _read_attribute(*, node_id: int, attribute_path: str) -> Any:
+        return dict(flat_response)
+
+    async def _write_attribute(
+        *, node_id: int, attribute_path: str, value: Any
+    ) -> None:
+        flat_response[attribute_path] = value
+
+    client.read_attribute = AsyncMock(side_effect=_read_attribute)
+    client.write_attribute = AsyncMock(side_effect=_write_attribute)
 
     # subscribe_events returns a no-op unsubscribe callable.
     unsub = MagicMock(name="UnsubscribeFn")

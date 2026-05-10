@@ -6,13 +6,33 @@
 
 ---
 
+## v0.4.0 — live reads + anti-loop write semantics (current)
+
+The 0.3.0 coordinator polled `node.node_data.attributes` (the python-matter-server local cache). For VENDOR clusters the client has no decoder for, that cache is populated only at commissioning and never refreshed — push events fire, but the cache itself stays stale forever. Result: every poll cycle clobbered our optimistic-cached writes with the wrong original value, triggering an auto-restore loop that wrote the canonical value once per polling interval forever.
+
+**v0.4.0 fixes this at the root.** The new `matter_ws.py` module owns two single-purpose helpers:
+
+- `live_read_attribute(matter_client, node_id, path)` — issues `matter_client.send_command("read_attribute", …)`, which goes straight to the matter-server WS and returns device truth. No client-side cache, no decoder dependency.
+- `live_write_attribute(matter_client, node_id, path, value)` — same channel, same bypass.
+
+`coordinator.py` and the writable entities (`humidifier.py`, `select.py`) now share these helpers — there is exactly one path for matter I/O. The old multi-fallback logic and `_normalize_read_result` / `_walk_to_attr_dict` helpers are gone.
+
+**Anti-loop write semantics** at the integration layer:
+
+- **Per-attribute `asyncio.Lock`** serialises concurrent writes to the same attribute.
+- **Write deduplication** under the lock: if the requested value matches the cached value, the round trip is skipped. An automation that fires `set_humidity(45)` 100 times against a device already at 45 results in zero device writes — the integration cannot be the source of a runaway loop.
+
+Tests: 125 passing, 91.56% coverage. The new `test_matter_ws.py` covers the helpers directly; `test_humidifier.py` and `test_select.py` exercise dedup + concurrent-lock behaviour explicitly.
+
+---
+
 ## Bottom line
 
 - **Goal:** Get the TCL H50D44W dehumidifier fully integrated with HA for mold prevention — bucket-full alerts, tamper self-healing, full read/write of target humidity + mode. Build it RIGHT, no legacy/maintenance shortcuts.
-- **STATUS: ✅ COMPLETE.** Read AND write fully operational. Auto-restore fires within seconds when target drifts. Verified end-to-end on real H50D44W: HA service `humidifier.set_humidity 47` → device confirms 47 → tampering automation triggers → device back to 45.
-- **All five mold-prevention automations live:** bucket-full (persistent every 30 min), offline (10-min unavailable), tampering alerts, **auto-restore (enabled)**, AC dehumidify demoted to fail-over.
-- **Path taken (both):** (a) Patched matter-server addon `fa40c075_matter_server` builds the TCL cluster decoder in-container against the addon's own matter.js (TS source bundled, esbuild compiles at startup). (b) `tcl_matter` integration's `_write_attr` falls back to direct WebSocket on `core-matter-server:5580` when HA's matter-python-client rejects vendor cluster writes. Both converge on the same matter-server WS API.
-- **Cleanup when upstream lands:** When matter-js/matterjs-server PR #630 merges and HA core picks up the new matter-python-client, the typed-client path starts working and the bypass becomes a no-op. At that point: uninstall `fa40c075_matter_server`, reinstall the official `core_matter_server`, remove the `iamadamreed/addons` repository.
+- **STATUS: ✅ COMPLETE.** Read AND write fully operational with v0.4.0 live-read coordinator. Auto-restore fires within seconds when target drifts. Verified end-to-end on real H50D44W: HA service `humidifier.set_humidity 47` → device confirms 47 → device truth read live, no flap.
+- **All five mold-prevention automations live:** bucket-full (persistent every 30 min), offline (10-min unavailable), tampered (notifies only if drift persists 30s — i.e. auto-restore failed), **auto-restore (silent, immediate)**, AC dehumidify demoted to fail-over.
+- **Path taken:** Patched matter-server addon `fa40c075_matter_server` builds the TCL cluster decoder in-container against the addon's own matter.js (TS source bundled, esbuild compiles at startup). `tcl_matter` integration talks to it over the existing matter-server WS via `send_command` — no second connection, no client-side decoder needed.
+- **Cleanup when upstream lands:** When matter-js/matterjs-server PR #630 merges and rolls into the official `core_matter_server` add-on image, uninstall `fa40c075_matter_server`, reinstall the official `core_matter_server`, remove the `iamadamreed/addons` repository. The integration code itself does not need to change — `send_command` already works against the unpatched server (it just won't decode vendor clusters until the patch is in).
 
 ---
 
