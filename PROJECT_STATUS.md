@@ -9,11 +9,10 @@
 ## Bottom line
 
 - **Goal:** Get the TCL H50D44W dehumidifier fully integrated with HA for mold prevention — bucket-full alerts, tamper self-healing, full read/write of target humidity + mode. Build it RIGHT, no legacy/maintenance shortcuts.
-- **State today:** Reads work end-to-end via matter.js. All read-side automations live (bucket-full alerts persistent every 30 min, offline detection, tampering detection, AC dehumidify demoted to backup). Writes silently no-op pending the cluster decoder reaching the running matter-server addon.
-- **Two paths to enabling writes** (you can take either, see §11):
-  1. **Wait for upstream:** matter-js/matterjs-server PR #630 merges → next matter-server npm release → next HA addon image rebuild. Estimated 1–4 weeks. Zero work for you.
-  2. **Swap to the patched addon NOW:** A pre-built patched matter-server addon is already installed on Adam's HA at slug `fa40c075_matter_server` (boot=manual, currently stopped). One 5-minute manual step (factory-reset the dehumidifier and re-pair via the device's Matter sticker code `1507-222-8207`) flips writes on today.
-- **Auto-restore activation:** Once writes work via either path, enable the disabled automation `automation.mold_prevention_dehumidifier_auto_restore` (it's pre-staged with the correct logic) — settings drift gets corrected automatically.
+- **STATUS: ✅ COMPLETE.** Read AND write fully operational. Auto-restore fires within seconds when target drifts. Verified end-to-end on real H50D44W: HA service `humidifier.set_humidity 47` → device confirms 47 → tampering automation triggers → device back to 45.
+- **All five mold-prevention automations live:** bucket-full (persistent every 30 min), offline (10-min unavailable), tampering alerts, **auto-restore (enabled)**, AC dehumidify demoted to fail-over.
+- **Path taken (both):** (a) Patched matter-server addon `fa40c075_matter_server` builds the TCL cluster decoder in-container against the addon's own matter.js (TS source bundled, esbuild compiles at startup). (b) `tcl_matter` integration's `_write_attr` falls back to direct WebSocket on `core-matter-server:5580` when HA's matter-python-client rejects vendor cluster writes. Both converge on the same matter-server WS API.
+- **Cleanup when upstream lands:** When matter-js/matterjs-server PR #630 merges and HA core picks up the new matter-python-client, the typed-client path starts working and the bypass becomes a no-op. At that point: uninstall `fa40c075_matter_server`, reinstall the official `core_matter_server`, remove the `iamadamreed/addons` repository.
 
 ---
 
