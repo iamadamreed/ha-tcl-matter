@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -12,60 +12,176 @@ from custom_components.tcl_matter.const import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_MODE,
     ATTR_TARGET_HUMIDITY,
+    NUM_TCL_FC03_DATA_ATTRS,
     TCL_CLUSTER_FC03,
 )
-from custom_components.tcl_matter.coordinator import (
-    TclMatterCoordinator,
-    _walk_to_attr_dict,
-)
+from custom_components.tcl_matter.coordinator import TclMatterCoordinator
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 
-def test_normalize_read_result_flat_paths() -> None:
+# ---------------------------------------------------------------------------
+# _parse_cluster_response
+# ---------------------------------------------------------------------------
+
+
+def test_parse_cluster_response_flat_paths() -> None:
     """Flat ``"endpoint/cluster/attr"`` keys yield an attr-id keyed dict."""
     result = {
         f"1/{TCL_CLUSTER_FC03}/0": 0,
         f"1/{TCL_CLUSTER_FC03}/1": 50,
         f"1/{TCL_CLUSTER_FC03}/2": 58,
     }
-    out = TclMatterCoordinator._normalize_read_result(result)
+    out = TclMatterCoordinator._parse_cluster_response(result)
     assert out == {0: 0, 1: 50, 2: 58}
 
 
-def test_normalize_read_result_nested() -> None:
-    """Nested {node:{endpoint:{cluster:{attr:v}}}} also flattens correctly."""
-    nested: dict[Any, Any] = {
-        5: {
-            1: {
-                TCL_CLUSTER_FC03: {0: 0, 1: 50, 2: 58},
-            },
-        },
+def test_parse_cluster_response_skips_metadata_attrs() -> None:
+    """Attrs >= NUM_TCL_FC03_DATA_ATTRS (e.g. 65528, 65532) are dropped."""
+    result = {
+        f"1/{TCL_CLUSTER_FC03}/1": 45,
+        f"1/{TCL_CLUSTER_FC03}/65528": [],
+        f"1/{TCL_CLUSTER_FC03}/65532": 0,
     }
-    out = TclMatterCoordinator._normalize_read_result(nested)
-    assert out == {0: 0, 1: 50, 2: 58}
+    out = TclMatterCoordinator._parse_cluster_response(result)
+    assert out == {1: 45}
 
 
-def test_normalize_read_result_non_dict_input() -> None:
-    """Non-dict inputs return an empty dict rather than raising."""
-    assert TclMatterCoordinator._normalize_read_result(None) == {}
-    assert TclMatterCoordinator._normalize_read_result([1, 2]) == {}
+def test_parse_cluster_response_skips_other_clusters() -> None:
+    """Path entries for other clusters / endpoints are ignored."""
+    result = {
+        f"1/{TCL_CLUSTER_FC03}/0": 0,
+        "0/40/1": 0x1334,  # BasicInformation/VendorID — wrong cluster
+        "1/6/0": True,  # OnOff cluster — wrong cluster
+        f"2/{TCL_CLUSTER_FC03}/1": 99,  # right cluster, wrong endpoint
+    }
+    out = TclMatterCoordinator._parse_cluster_response(result)
+    assert out == {0: 0}
 
 
-def test_normalize_read_result_skips_unparseable_attr() -> None:
+def test_parse_cluster_response_handles_unparseable() -> None:
     """Path components that aren't ints are silently dropped."""
     result = {f"1/{TCL_CLUSTER_FC03}/abc": 99, f"1/{TCL_CLUSTER_FC03}/2": 58}
-    out = TclMatterCoordinator._normalize_read_result(result)
+    out = TclMatterCoordinator._parse_cluster_response(result)
     assert out == {2: 58}
 
 
-def test_walk_to_attr_dict_returns_leaves() -> None:
-    """Helper returns every leaf-level dict in a nested structure."""
-    nested = {"a": {"b": {"c": 1, "d": 2}}, "e": {"f": 3}}
-    leaves = _walk_to_attr_dict(nested)
-    assert {"c": 1, "d": 2} in leaves
-    assert {"f": 3} in leaves
+def test_parse_cluster_response_non_dict_input() -> None:
+    """Non-dict inputs return an empty dict rather than raising."""
+    assert TclMatterCoordinator._parse_cluster_response(None) == {}
+    assert TclMatterCoordinator._parse_cluster_response([1, 2]) == {}
+    assert TclMatterCoordinator._parse_cluster_response("nope") == {}
+
+
+# ---------------------------------------------------------------------------
+# _read_cluster — live read via matter_client.read_attribute
+# ---------------------------------------------------------------------------
+
+
+async def test_read_cluster_issues_wildcard_read(
+    hass: HomeAssistant,
+    mock_matter_client: MagicMock,
+    make_tcl_device: Any,
+) -> None:
+    """``_read_cluster`` issues a single wildcard ``read_attribute`` call."""
+    device = make_tcl_device(5, {0: 0, 1: 50, 2: 58})
+    coordinator = TclMatterCoordinator(
+        hass=hass, matter_client=mock_matter_client, devices={5: device}
+    )
+
+    out = await coordinator._read_cluster(5)
+
+    # The fixture's read_attribute returns the default_node_attributes snapshot.
+    assert out[ATTR_TARGET_HUMIDITY] == 50
+    assert out[ATTR_CURRENT_HUMIDITY] == 58
+    mock_matter_client.read_attribute.assert_awaited_once_with(
+        node_id=5,
+        attribute_path=f"1/{TCL_CLUSTER_FC03}/*",
+    )
+
+
+async def test_read_cluster_returns_device_truth_not_node_data_cache(
+    hass: HomeAssistant,
+    mock_matter_client: MagicMock,
+    make_tcl_device: Any,
+) -> None:
+    """Regression: the coordinator must NOT read from ``node_data.attributes``.
+
+    This is the bug that v0.4.0 fixes — node_data.attributes is the
+    matter-python-client's local cache which never updates for vendor
+    clusters. Even when that cache is wildly wrong, the coordinator must
+    return the live server truth.
+    """
+    device = make_tcl_device(5, {1: 50})
+    # Poison node_data.attributes with stale wrong values to prove the
+    # coordinator never reads them.
+    device.node.node_data.attributes[f"1/{TCL_CLUSTER_FC03}/1"] = 99
+    device.node.node_data.attributes[f"1/{TCL_CLUSTER_FC03}/2"] = 99
+    # Configure read_attribute to return the device truth.
+    truth = {
+        f"1/{TCL_CLUSTER_FC03}/0": 0,
+        f"1/{TCL_CLUSTER_FC03}/1": 45,
+        f"1/{TCL_CLUSTER_FC03}/2": 52,
+    }
+    mock_matter_client.read_attribute = AsyncMock(return_value=truth)
+
+    coordinator = TclMatterCoordinator(
+        hass=hass, matter_client=mock_matter_client, devices={5: device}
+    )
+
+    out = await coordinator._read_cluster(5)
+    assert out[1] == 45  # device truth, not node_data's stale 99
+    assert out[2] == 52
+
+
+async def test_read_cluster_raises_on_unknown_node(
+    hass: HomeAssistant,
+    mock_matter_client: MagicMock,
+) -> None:
+    """An unknown node_id surfaces UpdateFailed."""
+    coordinator = TclMatterCoordinator(
+        hass=hass, matter_client=mock_matter_client, devices={}
+    )
+    with pytest.raises(UpdateFailed):
+        await coordinator._read_cluster(99)
+
+
+async def test_read_cluster_raises_when_server_returns_nothing(
+    hass: HomeAssistant,
+    mock_matter_client: MagicMock,
+    make_tcl_device: Any,
+) -> None:
+    """If the server response yields zero parsed attrs, raise UpdateFailed."""
+    device = make_tcl_device(5)
+    mock_matter_client.read_attribute = AsyncMock(return_value={})
+
+    coordinator = TclMatterCoordinator(
+        hass=hass, matter_client=mock_matter_client, devices={5: device}
+    )
+    with pytest.raises(UpdateFailed):
+        await coordinator._read_cluster(5)
+
+
+async def test_read_cluster_raises_when_server_returns_garbage(
+    hass: HomeAssistant,
+    mock_matter_client: MagicMock,
+    make_tcl_device: Any,
+) -> None:
+    """Garbage server response (non-dict) also raises UpdateFailed."""
+    device = make_tcl_device(5)
+    mock_matter_client.read_attribute = AsyncMock(return_value="not a dict")
+
+    coordinator = TclMatterCoordinator(
+        hass=hass, matter_client=mock_matter_client, devices={5: device}
+    )
+    with pytest.raises(UpdateFailed):
+        await coordinator._read_cluster(5)
+
+
+# ---------------------------------------------------------------------------
+# _async_update_data
+# ---------------------------------------------------------------------------
 
 
 async def test_async_update_data_polls_each_node(
@@ -79,76 +195,14 @@ async def test_async_update_data_polls_each_node(
     devices = {5: device_a, 6: device_b}
 
     coordinator = TclMatterCoordinator(
-        hass=hass,
-        matter_client=mock_matter_client,
-        devices=devices,
+        hass=hass, matter_client=mock_matter_client, devices=devices
     )
 
     snapshot = await coordinator._async_update_data()
-    assert snapshot[5] == {0: 0, 1: 50}
-    assert snapshot[6] == {0: 0, 1: 50}
-    # Per-device cache populated.
-    assert devices[5].attributes == {0: 0, 1: 50}
-
-
-async def test_read_cluster_uses_node_data_attributes_dict(
-    hass: HomeAssistant,
-    mock_matter_client: MagicMock,
-    make_tcl_device: Any,
-) -> None:
-    """``_read_cluster`` walks node_data.attributes and only keeps attrs 0..6.
-
-    Cluster metadata attributes (65528, 65532) must be skipped, and
-    ``get_attribute_value`` must NOT be invoked when node_data already
-    yields data.
-    """
-    device = make_tcl_device(5, {0: 0, 1: 50, 2: 58, 3: False})
-    # Inject metadata attributes that should be skipped.
-    device.node.node_data.attributes[f"1/{TCL_CLUSTER_FC03}/65528"] = []
-    device.node.node_data.attributes[f"1/{TCL_CLUSTER_FC03}/65532"] = 0
-    # And an out-of-range attribute that should also be skipped.
-    device.node.node_data.attributes[f"1/{TCL_CLUSTER_FC03}/7"] = "ignored"
-
-    coordinator = TclMatterCoordinator(
-        hass=hass,
-        matter_client=mock_matter_client,
-        devices={5: device},
-    )
-
-    out = await coordinator._read_cluster(5)
-    assert out == {0: 0, 1: 50, 2: 58, 3: False}
-    # Primary path must not require the get_attribute_value fallback.
-    device.node.get_attribute_value.assert_not_called()
-
-
-async def test_read_cluster_falls_back_to_get_attribute_value_when_node_data_empty(
-    hass: HomeAssistant,
-    mock_matter_client: MagicMock,
-    make_tcl_device: Any,
-) -> None:
-    """If node_data.attributes is empty, fall back to ``get_attribute_value``."""
-    device = make_tcl_device(5)
-    # Wipe node_data so the primary path returns nothing.
-    device.node.node_data.attributes = {}
-
-    # Configure get_attribute_value to return a value only for attrs 0 and 2.
-    def _get_attr(endpoint: int, cluster: int, attr: int) -> Any:
-        if endpoint == 1 and cluster == TCL_CLUSTER_FC03 and attr in (0, 2):
-            return {0: 1, 2: 60}[attr]
-        return None
-
-    device.node.get_attribute_value = MagicMock(side_effect=_get_attr)
-
-    coordinator = TclMatterCoordinator(
-        hass=hass,
-        matter_client=mock_matter_client,
-        devices={5: device},
-    )
-
-    out = await coordinator._read_cluster(5)
-    assert out == {0: 1, 2: 60}
-    # Fallback should have walked all 7 attribute IDs (0..6).
-    assert device.node.get_attribute_value.call_count == 7
+    # Each device gets a wildcard read; both snapshots reflect the fixture data.
+    assert snapshot[5][ATTR_TARGET_HUMIDITY] == 50
+    assert snapshot[6][ATTR_TARGET_HUMIDITY] == 50
+    assert mock_matter_client.read_attribute.await_count == 2
 
 
 async def test_async_update_data_preserves_cache_on_failure(
@@ -159,18 +213,14 @@ async def test_async_update_data_preserves_cache_on_failure(
     """A failing poll on a device with cached data is logged but not raised."""
     cached = {ATTR_MODE: 0, ATTR_TARGET_HUMIDITY: 50}
     device = make_tcl_device(5, cached)
-    # Force the read path to fail: empty node_data + raising get_attribute_value.
-    device.node.node_data.attributes = {}
-    device.node.get_attribute_value = MagicMock(side_effect=RuntimeError("net"))
+    mock_matter_client.read_attribute = AsyncMock(side_effect=RuntimeError("net"))
 
     coordinator = TclMatterCoordinator(
-        hass=hass,
-        matter_client=mock_matter_client,
-        devices={5: device},
+        hass=hass, matter_client=mock_matter_client, devices={5: device}
     )
 
     snapshot = await coordinator._async_update_data()
-    assert snapshot[5] == cached
+    assert snapshot[5] == cached  # cached value retained, no exception
 
 
 async def test_async_update_data_raises_when_no_cache(
@@ -181,39 +231,19 @@ async def test_async_update_data_raises_when_no_cache(
     """If a device has no cache and the read fails, surface UpdateFailed."""
     device = make_tcl_device(5)
     device.attributes.clear()
-    device.node.node_data.attributes = {}
-    device.node.get_attribute_value = MagicMock(side_effect=RuntimeError("net"))
+    mock_matter_client.read_attribute = AsyncMock(side_effect=RuntimeError("net"))
 
     coordinator = TclMatterCoordinator(
-        hass=hass,
-        matter_client=mock_matter_client,
-        devices={5: device},
+        hass=hass, matter_client=mock_matter_client, devices={5: device}
     )
 
     with pytest.raises(UpdateFailed):
         await coordinator._async_update_data()
 
 
-async def test_async_update_data_raises_when_node_returns_no_attributes(
-    hass: HomeAssistant,
-    mock_matter_client: MagicMock,
-    make_tcl_device: Any,
-) -> None:
-    """If neither node_data nor get_attribute_value yields data, raise UpdateFailed."""
-    device = make_tcl_device(5)
-    device.attributes.clear()
-    device.node.node_data.attributes = {}
-    # get_attribute_value returns None for everything → no data.
-    device.node.get_attribute_value = MagicMock(return_value=None)
-
-    coordinator = TclMatterCoordinator(
-        hass=hass,
-        matter_client=mock_matter_client,
-        devices={5: device},
-    )
-
-    with pytest.raises(UpdateFailed):
-        await coordinator._async_update_data()
+# ---------------------------------------------------------------------------
+# handle_push_event
+# ---------------------------------------------------------------------------
 
 
 async def test_handle_push_event_updates_one_attribute(
@@ -312,3 +342,14 @@ async def test_handle_push_event_uses_event_when_data_none(
         data=None,
     )
     assert primed_coordinator.data[5][ATTR_MODE] == 3
+
+
+# ---------------------------------------------------------------------------
+# Defensive: cluster constant must exist for test sanity
+# ---------------------------------------------------------------------------
+
+
+def test_data_attribute_id_range_is_sensible() -> None:
+    """Sanity: the attribute-ID range used by the parser stays small."""
+    # If this changes, _parse_cluster_response's metadata cutoff also must.
+    assert NUM_TCL_FC03_DATA_ATTRS == 7

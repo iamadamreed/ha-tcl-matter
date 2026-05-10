@@ -59,7 +59,15 @@ If you have a different TCL Matter dehumidifier, [open an issue][issue_tracker] 
 
 - Coexists with the built-in Matter integration on the same device card via shared `("matter", node_id)` device identifier.
 - Reads/writes attributes through the loaded `matter_client` — no separate Matter pairing, no cloud, no TCL Home dependency.
-- Subscribes to push updates where Matter exposes them; falls back to a 30-second poll for vendor cluster attributes that don't push.
+- **Live reads, not stale cache.** Vendor cluster attributes are fetched fresh from the matter-server itself via `matter_client.send_command("read_attribute", …)` — bypassing the python-matter-server local cache (which is never refreshed for clusters it lacks decoders for). Subscribes to push updates in parallel; the 30-second poll is a safety net.
+- **Anti-loop write semantics.** Each writable attribute has a per-instance `asyncio.Lock`, and writes are deduplicated against the cached value. An automation that fires `set_humidity(45)` 100 times against a device already at 45 results in zero device round trips — the integration cannot be the source of a runaway loop.
+
+## Server-side requirement
+
+This integration depends on the matter-server having a decoder registered for TCL's vendor clusters (`0x1334FC03`). Two paths get you there:
+
+1. **Wait for upstream.** [matter-js/matterjs-server PR #630](https://github.com/matter-js/matterjs-server/pull/630) ships the decoder. Once merged + released into the official `core_matter_server` add-on image, no extra work is needed.
+2. **Run the patched add-on now.** [github.com/iamadamreed/addons](https://github.com/iamadamreed/addons) ships a Matter Server add-on with the decoder pre-bundled. Add the repo to Home Assistant → Settings → Add-ons → 3-dot menu → Repositories, install, and point the built-in Matter integration at it.
 
 ## Contributing
 

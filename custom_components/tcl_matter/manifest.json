@@ -11,5 +11,5 @@
   "documentation": "https://github.com/iamadamreed/ha-tcl-matter",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/iamadamreed/ha-tcl-matter/issues",
-  "version": "0.3.0"
+  "version": "0.4.0"
 }
