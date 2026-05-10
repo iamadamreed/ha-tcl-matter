@@ -6,6 +6,20 @@
 
 ---
 
+## Mainline / upstream chain
+
+The full path to retiring this custom integration in favour of first-class HA core support:
+
+| Step | Repo | Status |
+|---|---|---|
+| 1. Server-side cluster decoder | `matter-js/matterjs-server` | **[PR #630 OPEN](https://github.com/matter-js/matterjs-server/pull/630)** — branch `add-tcl-vendor-cluster` in [iamadamreed/matterjs-server](https://github.com/iamadamreed/matterjs-server) |
+| 2. matter-python-client release | (auto from #630) | Pending — auto-generated when #630 builds |
+| 3. Live-now patched addon | [iamadamreed/addons](https://github.com/iamadamreed/addons) | **Live in production** at `8.4.0-tclpatch.4`. Retires when steps 1+2 land. |
+| 4. HA core matter integration discovery PR | [iamadamreed/core](https://github.com/iamadamreed/core/tree/matter-tcl-discovery) | **Plan ready** — see [MAINLINE_PR_PLAN.md](./MAINLINE_PR_PLAN.md). Branch `matter-tcl-discovery` reserved. Filing blocked on steps 1+2. |
+| 5. This custom integration | `iamadamreed/ha-tcl-matter` | **Live for HACS users today.** Deprecates once step 4 ships. |
+
+---
+
 ## v0.4.0 — live reads + anti-loop write semantics (current)
 
 The 0.3.0 coordinator polled `node.node_data.attributes` (the python-matter-server local cache). For VENDOR clusters the client has no decoder for, that cache is populated only at commissioning and never refreshed — push events fire, but the cache itself stays stale forever. Result: every poll cycle clobbered our optimistic-cached writes with the wrong original value, triggering an auto-restore loop that wrote the canonical value once per polling interval forever.
