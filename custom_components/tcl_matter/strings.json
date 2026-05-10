@@ -37,10 +37,18 @@
     },
     "binary_sensor": {
       "bucket_full": {
-        "name": "Water bucket full"
+        "name": "Water bucket",
+        "state": {
+          "off": "Empty",
+          "on": "Full"
+        }
       },
       "filter_alert": {
-        "name": "Filter alert"
+        "name": "Filter",
+        "state": {
+          "off": "OK",
+          "on": "Needs attention"
+        }
       }
     },
     "select": {
