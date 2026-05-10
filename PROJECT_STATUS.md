@@ -9,9 +9,11 @@
 ## Bottom line
 
 - **Goal:** Get the TCL H50D44W dehumidifier fully integrated with HA for mold prevention — bucket-full alerts, tamper self-healing, full read/write of target humidity + mode. Build it RIGHT, no legacy/maintenance shortcuts.
-- **State today:** Reads work end-to-end via matter.js. All read-side automations live (bucket-full alerts persistent every 30 min, offline detection, tampering detection, AC dehumidify demoted to backup). Writes silently no-op pending upstream PR.
-- **Blocked on:** Upstream [matter-js/matterjs-server PR #630](https://github.com/matter-js/matterjs-server/pull/630) to register TLV types for TCL vendor cluster `0x1334FC03`. Until merged + propagated to the HA addon, write_attribute can't serialize. PR is OPEN, MERGEABLE, no review activity yet.
-- **Next concrete step:** Wait on PR #630. When it merges → matter-server npm release → HA addon image build (~1 week total) → writes start working with no integration code changes. At that point: enable the auto-restore action in `mold_prevention_dehumidifier_tampered`, end-to-end test that physical-button changes get reverted by HA.
+- **State today:** Reads work end-to-end via matter.js. All read-side automations live (bucket-full alerts persistent every 30 min, offline detection, tampering detection, AC dehumidify demoted to backup). Writes silently no-op pending the cluster decoder reaching the running matter-server addon.
+- **Two paths to enabling writes** (you can take either, see §11):
+  1. **Wait for upstream:** matter-js/matterjs-server PR #630 merges → next matter-server npm release → next HA addon image rebuild. Estimated 1–4 weeks. Zero work for you.
+  2. **Swap to the patched addon NOW:** A pre-built patched matter-server addon is already installed on Adam's HA at slug `fa40c075_matter_server` (boot=manual, currently stopped). One 5-minute manual step (factory-reset the dehumidifier and re-pair via the device's Matter sticker code `1507-222-8207`) flips writes on today.
+- **Auto-restore activation:** Once writes work via either path, enable the disabled automation `automation.mold_prevention_dehumidifier_auto_restore` (it's pre-staged with the correct logic) — settings drift gets corrected automatically.
 
 ---
 
@@ -190,3 +192,50 @@ curl -sS -H "Authorization: Bearer $HA_TOKEN" -H "Accept: text/plain" \
 | HA Core | 2026.5.1 |
 | Test framework | `pytest-homeassistant-custom-component==0.13.300` on Python 3.14 |
 | Fabric / node | fabric_id=2, node_id=5 |
+
+---
+
+## 11. Swap procedure — enable writes today via the patched addon
+
+The patched matter-server addon (`fa40c075_matter_server`) is pre-installed on Adam's HA. It bundles the TCL cluster decoder from [matterjs-server PR #630](https://github.com/matter-js/matterjs-server/pull/630) so `humidifier.set_humidity` and `humidifier.set_mode` actually write to the device instead of silently no-opping.
+
+**Why a 5-minute manual step is needed:** addon `/data` directories are scoped per addon slug. Matter fabric credentials and node certificates live in the running addon's `/data/` and don't carry over to a different addon. Switching addons means re-pairing the dehumidifier into the new addon's fresh fabric.
+
+### Procedure (one shot, ~5 min)
+
+1. **(Adam) Factory-reset the dehumidifier.** Hold the power button until it beeps and the unit enters commissioning mode (rapid LED blink).
+2. **(From this side / Claude) Swap the addons:**
+   ```python
+   # via supervisor/api WS:
+   #   POST /addons/core_matter_server/options   {"boot": "manual"}
+   #   POST /addons/core_matter_server/stop
+   #   POST /addons/fa40c075_matter_server/options {"boot": "auto", "options": {"beta": True, ...}}
+   #   POST /addons/fa40c075_matter_server/start
+   ```
+   The patched addon's startup log should print `FORK: TCL cluster decoder installed (vendor 0x1334)`.
+3. **(Adam) Re-pair via HA Companion app:** Settings → Devices & Services → Matter → Add Device → enter `1507-222-8207` (the device's Matter pairing code from the sticker).
+4. Once paired, the `tcl_matter` integration auto-discovers the new node and re-creates entities. Verify with:
+   ```bash
+   PATH="/Users/smarter/.local/bin:$PATH" uvx --quiet --with websockets python3 /tmp/check_tcl_states.py
+   ```
+5. Test write:
+   ```bash
+   curl -X POST -H "Authorization: Bearer $HA_TOKEN" -H "Content-Type: application/json" \
+     http://192.168.2.107:8123/api/services/humidifier/set_humidity \
+     -d '{"entity_id": "humidifier.tcl_dehumidifier", "humidity": 50}'
+   # observe the unit's display change from 45 to 50
+   ```
+6. Enable `automation.mold_prevention_dehumidifier_auto_restore` (currently disabled).
+7. Done — full read/write live, tampering self-heals.
+
+### Rollback (if anything goes wrong)
+```python
+#   POST /addons/fa40c075_matter_server/stop
+#   POST /addons/fa40c075_matter_server/options {"boot": "manual"}
+#   POST /addons/core_matter_server/options     {"boot": "auto"}
+#   POST /addons/core_matter_server/start
+```
+The original fabric in core's `/data/` is untouched, so reverting brings the existing pairing back online instantly (verified 2026-05-09).
+
+### When upstream lands
+When matter-js/matterjs-server PR #630 merges and a new matter-server release rolls into the official addon image, uninstall `fa40c075_matter_server` and the iamadamreed/addons repository — the patched addon becomes redundant.
