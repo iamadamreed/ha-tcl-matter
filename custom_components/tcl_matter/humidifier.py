@@ -130,40 +130,94 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
 
     async def _write_attr(self, attr_id: int, value: Any) -> None:
         """
-        Issue a matter write_attribute for one of our vendor attrs.
+        Write a TCL vendor cluster attribute on the device.
 
-        The matter client API has shifted between releases: some take
-        ``attribute_path=`` with a string, others take a parsed Attribute
-        descriptor. We try the path-string form first and fall back to
-        positional args.
+        First tries the HA matter client's typed `write_attribute`. The
+        matter-python-client library validates attribute paths against its
+        cluster registry; vendor clusters that aren't pre-registered raise
+        "Attribute X on cluster Y unknown". When that happens we fall back to
+        a direct WebSocket send to the matter-server addon, which (with the
+        cluster decoder loaded server-side) accepts the write.
 
-        TODO(matter-api): unify on whichever signature ships in the HA
-        release we target once the python-matter-server API stabilises
-        for vendor cluster writes.
+        Both paths converge on the matter-server addon; the fallback just
+        skips the client-side schema check.
         """
         path = f"1/{TCL_CLUSTER_FC03}/{attr_id}"
-        write = getattr(self._matter_client, "write_attribute", None)
-        if not callable(write):
-            LOGGER.error("matter_client has no write_attribute(); cannot push value")
+        wrote = await self._write_via_client(path, value)
+        if not wrote:
+            wrote = await self._write_via_direct_ws(path, value)
+        if not wrote:
+            LOGGER.error(
+                "write_attribute failed via both paths for node=%s path=%s value=%r",
+                self._node_id,
+                path,
+                value,
+            )
             return
-
-        try:
-            await write(node_id=self._node_id, attribute_path=path, value=value)
-        except TypeError:
-            try:
-                await write(self._node_id, path, value)
-            # Defensive: matter-server APIs raise inconsistent types across versions.
-            except Exception:  # noqa: BLE001
-                LOGGER.exception(
-                    "write_attribute failed for node=%s path=%s value=%r",
-                    self._node_id,
-                    path,
-                    value,
-                )
-                return
         # Optimistically update local cache so the UI reflects the change
         # without waiting for the next push/poll.
         self.coordinator._devices[self._node_id].attributes[attr_id] = value  # noqa: SLF001
         snapshot = dict(self.coordinator.data or {})
         snapshot.setdefault(self._node_id, {})[attr_id] = value
         self.coordinator.async_set_updated_data(snapshot)
+
+    async def _write_via_client(self, path: str, value: Any) -> bool:
+        """Try the HA matter client's typed write_attribute. Returns True on success."""
+        write = getattr(self._matter_client, "write_attribute", None)
+        if not callable(write):
+            return False
+        try:
+            await write(node_id=self._node_id, attribute_path=path, value=value)
+        except TypeError:
+            try:
+                await write(self._node_id, path, value)
+            except Exception as err:  # noqa: BLE001
+                LOGGER.debug("client positional write failed: %s", err)
+                return False
+        # The matter-python-client raises ValueError on unknown vendor attrs
+        # before sending. Catch broadly because the upstream error type isn't
+        # stable across releases.
+        except Exception as err:  # noqa: BLE001
+            LOGGER.debug(
+                "client write rejected for %s; falling back to direct WS: %s",
+                path,
+                err,
+            )
+            return False
+        return True
+
+    async def _write_via_direct_ws(self, path: str, value: Any) -> bool:
+        """
+        Send write_attribute directly to the matter-server addon's WS.
+
+        Bypasses the HA client's local cluster-registry check. The addon
+        ships the TCL cluster decoder so the wire format succeeds.
+        """
+        import aiohttp  # noqa: PLC0415 — local-only fallback path
+
+        url = "ws://core-matter-server:5580/ws"
+        try:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.ws_connect(url, timeout=10) as ws,
+            ):
+                await ws.receive_json()  # server hello
+                await ws.send_json(
+                    {
+                        "message_id": "tcl_write",
+                        "command": "write_attribute",
+                        "args": {
+                            "node_id": self._node_id,
+                            "attribute_path": path,
+                            "value": value,
+                        },
+                    }
+                )
+                msg = await ws.receive_json(timeout=10)
+                if msg.get("error_code") or msg.get("error"):
+                    LOGGER.warning("direct WS write failed: %s", msg)
+                    return False
+                return True
+        except Exception as err:  # noqa: BLE001
+            LOGGER.warning("direct WS write to matter-server failed: %s", err)
+            return False
