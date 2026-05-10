@@ -1,8 +1,8 @@
 """
 TCL Matter integration.
 
-Decodes TCL's vendor-specific Matter clusters (0x1334FC00 / 0x1334FC03)
-that the built-in matter integration exposes as opaque attributes. This
+Decodes TCL's vendor-specific Matter cluster 0x1334FC03 that the built-in
+matter integration exposes as opaque attributes. This
 component coexists with the built-in matter integration: it reuses the
 same device identifier (("matter", node_id)) so both integrations share
 one device card in the HA UI.

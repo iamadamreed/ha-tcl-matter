@@ -19,8 +19,7 @@ LOGGER: Final = logging.getLogger(__package__)
 # TCL vendor identifier (from BasicInformation cluster, endpoint 0)
 TCL_VENDOR_ID: Final = 0x1334  # 4916
 
-# Vendor-specific cluster IDs (endpoint 1 on the dehumidifier)
-TCL_CLUSTER_FC00: Final = 0x1334FC00  # opaque (one string attribute, currently empty)
+# Vendor-specific cluster ID (endpoint 1 on the dehumidifier)
 TCL_CLUSTER_FC03: Final = 0x1334FC03  # primary control/state cluster
 
 # Attribute IDs on TCL_CLUSTER_FC03
@@ -31,9 +30,6 @@ ATTR_BUCKET_FULL: Final = 3  # bool — water bucket full
 ATTR_LOCK_OR_FILTER: Final = 4  # bool — child lock or filter alert (TBD)
 ATTR_ERROR_CODES: Final = 5  # string — JSON-encoded list, e.g. "[]"
 ATTR_FEATURE_SET: Final = 6  # string — JSON-encoded list, e.g. "[3]"
-
-# Attribute on TCL_CLUSTER_FC00 (vendor-prefixed ID, opaque for now)
-TCL_CLUSTER_FC00_OPAQUE_ATTR: Final = 0x1334E000  # 322174976
 
 # Operating mode mapping. The integer-to-name pairings follow the order shown
 # in the TCL Home app and have been confirmed for mode 0 (Set) and 1 (Continue)

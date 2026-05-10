@@ -9,7 +9,7 @@ Home Assistant integration that surfaces **target humidity, current humidity, mo
 
 TCL ships dehumidifiers (e.g. **H50D44W**, **H50D66KW**) as Matter-over-Wi-Fi devices, but registers them with the CSA as a generic **Fan** device type. Home Assistant's built-in Matter integration follows the spec literally and exposes only `fan.*` (on/off + speed) — losing the actual dehumidifier features.
 
-The dehumidifier-specific data **is** present on the device — just inside TCL's vendor-specific Matter clusters (`0x1334FC00`, `0x1334FC03`) that no generic Matter ecosystem decodes. This integration reads those clusters via the existing Matter pairing and exposes proper entities.
+The dehumidifier-specific data **is** present on the device — just inside TCL's vendor-specific Matter cluster `0x1334FC03` that no generic Matter ecosystem decodes. This integration reads that cluster via the existing Matter pairing and exposes proper entities.
 
 ## Features
 
