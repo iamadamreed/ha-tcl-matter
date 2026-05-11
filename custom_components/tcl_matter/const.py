@@ -26,10 +26,18 @@ TCL_CLUSTER_FC03: Final = 0x1334FC03  # primary control/state cluster
 ATTR_MODE: Final = 0  # uint8 — operating mode (Set/Continue/Comfort/Smart/Dry)
 ATTR_TARGET_HUMIDITY: Final = 1  # uint8 — writable RH setpoint (35-85)
 ATTR_CURRENT_HUMIDITY: Final = 2  # uint8 — current ambient RH
-ATTR_BUCKET_FULL: Final = 3  # bool — water bucket full
+ATTR_BUCKET_FULL: Final = 3  # bool — dedicated water-bucket flag (DEAD on H50D44W;
+#                                empirically verified 2026-05-11 to stay False even when the
+#                                bucket is full. Kept as a defensive read in case TCL wires it
+#                                up on a future model or firmware. Real bucket-full signal is
+#                                code 5 in ATTR_ERROR_CODES.)
 ATTR_LOCK_OR_FILTER: Final = 4  # bool — child lock or filter alert (TBD)
-ATTR_ERROR_CODES: Final = 5  # string — JSON-encoded list, e.g. "[]"
+ATTR_ERROR_CODES: Final = 5  # string — JSON-encoded list, e.g. "[]" or "[5]"
 ATTR_FEATURE_SET: Final = 6  # string — JSON-encoded list, e.g. "[3]"
+
+# Known error-code semantics (empirically verified against H50D44W on firmware 1.0).
+# Other codes will appear over time; document them here as they're identified.
+ERROR_CODE_BUCKET_FULL: Final = 5
 
 # Operating mode mapping. The integer-to-name pairings follow the order shown
 # in the TCL Home app and have been confirmed for mode 0 (Set) and 1 (Continue)

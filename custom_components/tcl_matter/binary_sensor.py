@@ -3,8 +3,11 @@ Binary sensor platform for TCL Matter dehumidifiers.
 
 Exposes the two boolean status flags on cluster 0x1334FC03:
 
-* :class:`TclBucketFullBinarySensor` (attr 3) — water bucket full,
-  causes the device to stop running.
+* :class:`TclBucketFullBinarySensor` — water bucket full. The dedicated
+  bool at attr 3 is dead on the H50D44W (empirically verified
+  2026-05-11), so the canonical signal is error code 5 in ATTR_ERROR_CODES
+  (attr 5). We OR both sources so any future firmware that wires up attr 3
+  is also caught.
 * :class:`TclFilterAlertBinarySensor` (attr 4) — semantics still TBD;
   TCL's app shows it as either a child-lock indicator or a filter-clean
   reminder depending on the SKU.
@@ -12,7 +15,8 @@ Exposes the two boolean status flags on cluster 0x1334FC03:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -20,7 +24,13 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.const import EntityCategory
 
-from .const import ATTR_BUCKET_FULL, ATTR_LOCK_OR_FILTER
+from .const import (
+    ATTR_BUCKET_FULL,
+    ATTR_ERROR_CODES,
+    ATTR_LOCK_OR_FILTER,
+    ERROR_CODE_BUCKET_FULL,
+    LOGGER,
+)
 from .entity import TclMatterEntity
 
 if TYPE_CHECKING:
@@ -62,8 +72,43 @@ def _coerce_bool(value: object) -> bool | None:
     return None
 
 
+def _parse_error_codes(value: object) -> list[Any] | None:
+    """
+    Decode TCL's JSON-encoded error_codes payload to a list.
+
+    Returns ``None`` if the value is missing or cannot be parsed; ``[]`` if
+    the device reports no active errors. Mirrors the logic in :mod:`sensor`.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, str):
+        return None
+    if not value.strip():
+        return []
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        LOGGER.debug("Could not parse TCL error_codes payload: %r", value)
+        return None
+    return decoded if isinstance(decoded, list) else [decoded]
+
+
 class TclBucketFullBinarySensor(TclMatterEntity, BinarySensorEntity):
-    """Water bucket full indicator (attr 3)."""
+    """
+    Water bucket full indicator.
+
+    On the H50D44W (firmware 1.0) the dedicated ``ATTR_BUCKET_FULL`` bool
+    is never set — empirically verified 2026-05-11 by cycling the bucket
+    in/out and watching the full attribute table. The canonical bucket-full
+    signal is **error code 5** in ``ATTR_ERROR_CODES``. We OR both sources
+    so:
+
+    * any TCL device that does wire up attr 3 keeps working, and
+    * the H50D44W (and any TCL SKU using the same error-code table) gets
+      a real signal via the error-code channel.
+    """
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_translation_key = "bucket_full"
@@ -75,7 +120,13 @@ class TclBucketFullBinarySensor(TclMatterEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return True when the bucket is full."""
-        return _coerce_bool(self._node_data.get(ATTR_BUCKET_FULL))
+        attr_3 = _coerce_bool(self._node_data.get(ATTR_BUCKET_FULL))
+        if attr_3 is True:
+            return True
+        codes = _parse_error_codes(self._node_data.get(ATTR_ERROR_CODES))
+        if codes is None:
+            return attr_3  # fall back to the bool reading (may be None)
+        return ERROR_CODE_BUCKET_FULL in codes
 
 
 class TclFilterAlertBinarySensor(TclMatterEntity, BinarySensorEntity):

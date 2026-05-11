@@ -15,8 +15,8 @@ The dehumidifier-specific data **is** present on the device — just inside TCL'
 
 - 💧 `humidifier.tcl_dehumidifier` — target humidity (35–85 %), mode select
 - 📊 `sensor.tcl_dehumidifier_current_humidity` — ambient RH from the unit's onboard sensor
-- 🪣 `binary_sensor.tcl_dehumidifier_water_bucket_full` — alerts when bucket fills
-- ⚠️ `sensor.tcl_dehumidifier_error_codes` — diagnostic
+- 🪣 `binary_sensor.tcl_dehumidifier_water_bucket_full` — alerts when bucket fills (reads error code 5 on H50D44W; falls back to the dedicated bool for any firmware that ever wires it up)
+- ⚠️ `sensor.tcl_dehumidifier_error_codes` — diagnostic; known codes: **5 = water bucket full**
 - 🎛️ `select.tcl_dehumidifier_mode` — direct mode control (Set / Continue / Comfort / Smart / Dry)
 
 ## Requirements

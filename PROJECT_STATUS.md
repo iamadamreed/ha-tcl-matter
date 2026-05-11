@@ -3,7 +3,7 @@
 **Last updated:** 2026-05-10
 **Property:** 2504 Canyon Bay
 **Owner:** Adam Reed (`iamadamreed`)
-**Current release:** [v0.4.1](https://github.com/iamadamreed/ha-tcl-matter/releases/tag/v0.4.1)
+**Current release:** [v0.4.2](https://github.com/iamadamreed/ha-tcl-matter/releases/tag/v0.4.2)
 
 ---
 
@@ -29,6 +29,12 @@ The full path to retiring this custom integration in favour of first-class HA co
 - **Anti-loop** — per-attribute `asyncio.Lock` plus write deduplication. The integration cannot be the source of a runaway loop.
 
 ---
+
+## v0.4.2 — bucket-full sensor reads error code 5
+
+**Empirical finding (2026-05-11):** on the **TCL H50D44W** the dedicated `waterBucketFull` bool (cluster `0x1334FC03`, attr 3) is **dead** — it stays `false` even when the bucket is physically full and the unit has stopped. The only attribute that flips on bucket fill/empty is `errorCodes` (attr 5) going from `"[]"` ↔ `"[5]"`. Verified by running a polling watcher across a full bucket-empty-reinsert cycle: only `errorCodes` (and one point of `currentHumidity` measurement noise) changed.
+
+`TclBucketFullBinarySensor.is_on` now returns `True` when **either** `attr 3` is true **or** `5` is in the parsed `error_codes` list. Defensive OR so any future TCL firmware that wires up attr 3 still works. Added `ERROR_CODE_BUCKET_FULL = 5` constant in `const.py`. Tests cover all combinations (139 passing at 91.3 % coverage).
 
 ## v0.4.1 architecture (current)
 
