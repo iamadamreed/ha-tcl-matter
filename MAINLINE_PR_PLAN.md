@@ -6,8 +6,9 @@ This document is the executable spec for the eventual PR to [`home-assistant/cor
 
 | Repo | Status |
 |---|---|
-| `matter-js/matterjs-server` | [PR #630](https://github.com/matter-js/matterjs-server/pull/630) **OPEN** — adds `TclDehumidifierCluster` (`0x1334FC03`) decoder, with `mode` as `enum8` + a `TclMode` named-values mapping. Auto-generates the corresponding Python class into `matter-python-client`. Maintainer review (Apollon77) handled 2026-05-10; head is `d7a3632`. |
-| `home-assistant/core` matter integration | **BLOCKED on #630** — cannot import `matter_server.common.custom_clusters.TclDehumidifierCluster` until matter-js merges + a `matter-python-client` release ships. Fork prepared at [`iamadamreed/core`](https://github.com/iamadamreed/core); branch `matter-tcl-discovery` reserved for the diff. |
+| `matter-js/matterjs-server` | ✅ [PR #630](https://github.com/matter-js/matterjs-server/pull/630) **MERGED** 2026-05-12 12:05 UTC by Apollon77 (`a60d524` on `main`). Adds `TclDehumidifierCluster` (`0x1334FC03`) decoder with `mode` as `enum8` + `errorCodes` JSDoc documenting empirical code 5 = water bucket full. |
+| `matter-python-client` (PyPI) | ⏳ Pending. Latest is `0.6.8` (pre-merge). The auto-publish pipeline runs nightly; the next dev release (~04:00 UTC) or whenever a stable is cut will include `TclDehumidifierCluster`. |
+| `home-assistant/core` matter integration | **Unblocked by PR #630; awaiting matter-python-client release** so `from matter_server.common.custom_clusters import TclDehumidifierCluster` resolves. Fork prepared at [`iamadamreed/core`](https://github.com/iamadamreed/core); branch `matter-tcl-discovery` reserved for the diff. |
 
 ## Why this PR is the real mainline path
 

@@ -13,11 +13,11 @@ The full path to retiring this custom integration in favour of first-class HA co
 
 | Step | Repo | Status |
 |---|---|---|
-| 1. Server-side cluster decoder | `matter-js/matterjs-server` | **[PR #630 OPEN](https://github.com/matter-js/matterjs-server/pull/630)** — branch `add-tcl-vendor-cluster` in [iamadamreed/matterjs-server](https://github.com/iamadamreed/matterjs-server). **Maintainer review handled** (Apollon77, 2026-05-10) — diagnostic dump posted, all 5 inline review threads addressed in commits `91f79b2` and `d7a3632` (PR head) and resolved. |
-| 2. matter-python-client release | (auto from #630) | Pending — auto-generated when #630 builds. |
-| 3. Live-now patched addon | [iamadamreed/addons](https://github.com/iamadamreed/addons) | **Live in production** at `8.4.0-tclpatch.4`. Retires when steps 1+2 land. |
-| 4. HA core matter integration discovery PR | [iamadamreed/core](https://github.com/iamadamreed/core/tree/matter-tcl-discovery) | **Plan ready** — see [MAINLINE_PR_PLAN.md](./MAINLINE_PR_PLAN.md). Branch `matter-tcl-discovery` reserved. Filing blocked on steps 1+2. |
-| 5. This custom integration | `iamadamreed/ha-tcl-matter` | **Live for HACS users today at v0.4.1.** Deprecates once step 4 ships. |
+| 1. Server-side cluster decoder | `matter-js/matterjs-server` | ✅ **[PR #630 MERGED](https://github.com/matter-js/matterjs-server/pull/630)** — merged 2026-05-12 12:05 UTC by Apollon77 into `main` as `a60d524`. Three follow-up commits handled review feedback (`91f79b2`, `d7a3632`, `ce78ac9`); all 5 inline review threads resolved. Final scope: single `TclDehumidifierCluster` (0x1334FC03) with `mode` as `enum8`, `errorCodes` documenting empirical code 5 = water bucket full. Speculative `TclPrivateCluster` dropped per review. |
+| 2. matter-python-client release | (auto from #630) | ⏳ **Pending.** Latest on PyPI is `0.6.8`; the next nightly (~04:00 UTC daily) or a stable release will include `TclDehumidifierCluster`. |
+| 3. Live-now patched addon | [iamadamreed/addons](https://github.com/iamadamreed/addons) | **Live in production** at `8.4.0-tclpatch.6`. Becomes redundant once a stock `matter-server` ships with PR #630 included. |
+| 4. HA core matter integration discovery PR | [iamadamreed/core](https://github.com/iamadamreed/core/tree/matter-tcl-discovery) | **Plan ready** — see [MAINLINE_PR_PLAN.md](./MAINLINE_PR_PLAN.md). Branch `matter-tcl-discovery` reserved. Unblocked by step 1; awaiting step 2 release so the `import` works. |
+| 5. This custom integration | `iamadamreed/ha-tcl-matter` | **Live for HACS users today at v0.4.2.** Deprecates once step 4 ships. |
 
 ---
 
@@ -60,7 +60,7 @@ Tests: **125 passing, 91.56 % coverage**. `test_matter_ws.py` covers the helpers
 
 ## Maintainer feedback — PR #630
 
-Apollon77 (matter.js collaborator) reviewed on 2026-05-10 and left one top-level review plus five inline comments. All addressed in commits `91f79b2` (initial response) and `d7a3632` (tightening per maintainer's implicit standards). All five review threads marked resolved.
+Apollon77 (matter.js collaborator) reviewed on 2026-05-10 and left one top-level review plus five inline comments. All addressed in commits `91f79b2` (initial response), `d7a3632` (tightening per maintainer's implicit standards), and `ce78ac9` (empirical error-code-5 documentation). All five review threads marked resolved. **Merged 2026-05-12 12:05 UTC** by Apollon77 (`a60d524` on `main`).
 
 | Reviewer ask | Resolution |
 |---|---|
