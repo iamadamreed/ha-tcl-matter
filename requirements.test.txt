@@ -2,4 +2,4 @@
 pytest-homeassistant-custom-component==0.13.300
 pytest-asyncio>=0.23
 pytest-cov>=5.0
-syrupy>=4.6
+syrupy>=5.1.0
