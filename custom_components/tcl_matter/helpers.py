@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .const import LOGGER
+from .const import LOGGER, MODE_VALUE_MAP
 
 
 def coerce_bool(value: object) -> bool | None:
@@ -46,3 +46,19 @@ def parse_json_list(value: object) -> list[Any] | None:
         LOGGER.debug("Could not parse TCL list payload: %r", value)
         return None
     return decoded if isinstance(decoded, list) else [decoded]
+
+
+def coerce_int(value: object) -> int | None:
+    """Return ``value`` as an int, or None if it is missing or not numeric."""
+    if value is None:
+        return None
+    try:
+        return int(value)  # type: ignore[call-overload]
+    except TypeError, ValueError:
+        return None
+
+
+def mode_name(raw: object) -> str | None:
+    """Map the device's integer mode to its name, or None if unknown."""
+    number = coerce_int(raw)
+    return MODE_VALUE_MAP.get(number) if number is not None else None

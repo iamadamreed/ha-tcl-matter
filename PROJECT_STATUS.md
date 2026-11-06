@@ -40,21 +40,21 @@ The full path to retiring this custom integration in favour of first-class HA co
 
 `v0.3.0` polled `node.node_data.attributes` (the python-matter-server local cache). For vendor clusters with no client-side decoder, that cache is populated only at commissioning and never refreshed — push events fire, but the cache itself stays stale forever. Every poll cycle clobbered our optimistic-cached writes with the wrong original value, triggering an auto-restore loop that wrote the canonical value once per poll interval forever.
 
-**v0.4.0 fixed this at the root.** `matter_ws.py` owns two single-purpose helpers:
+**v0.4.0 fixed this at the root.** The I/O helpers (in `matter_ws.py` then, `matter_io.py` since 0.6.0) are single-purpose:
 
 - `live_read_attribute(matter_client, node_id, path)` — issues `matter_client.read_attribute(...)`, going straight to the matter-server WS and returning device truth. No client-side cache, no decoder dependency.
 - `live_write_attribute(matter_client, node_id, path, value)` — same channel, same bypass.
 
-`coordinator.py`, `humidifier.py`, and `select.py` share these helpers — there is exactly one path for matter I/O.
+Since 0.6.0 all writes go through `TclMatterCoordinator.async_write_attribute`, so there is exactly one path for matter I/O.
 
 **Anti-loop write semantics** at the integration layer:
 
 - **Per-attribute `asyncio.Lock`** serialises concurrent writes to the same attribute.
-- **Write deduplication** under the lock: if the requested value matches the cached value, the round trip is skipped.
+- **Write deduplication** under the lock: if a live read shows the device already holds the requested value, the write is skipped (0.4 compared against the cache, which can lag).
 
 **v0.4.1** added friendlier label translations for the bucket and filter binary sensors (`Empty / Full`, `OK / Needs attention`).
 
-Tests: **125 passing, 91.56 % coverage**. `test_matter_ws.py` covers the helpers directly; `test_humidifier.py` and `test_select.py` exercise dedup + concurrent-lock behaviour explicitly.
+Tests: **125 passing, 91.56 % coverage**. `test_matter_io.py` covers the helpers directly; `test_coordinator.py` exercises dedup and the per-attribute lock. As of 0.6.0 the suite is 190 tests at 99 % coverage.
 
 ---
 

@@ -26,7 +26,7 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
 
 
 async def test_user_flow_rejects_duplicate(hass: HomeAssistant) -> None:
-    """A second flow with an existing entry must abort as already_configured."""
+    """With an entry present, single_config_entry aborts a second flow."""
     existing = MockConfigEntry(
         domain=DOMAIN,
         title="TCL Matter",
@@ -40,4 +40,4 @@ async def test_user_flow_rejects_duplicate(hass: HomeAssistant) -> None:
         context={"source": config_entries.SOURCE_USER},
     )
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
+    assert result["reason"] == "single_instance_allowed"

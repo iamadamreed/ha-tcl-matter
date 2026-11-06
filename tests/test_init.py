@@ -1,370 +1,395 @@
-"""Tests for ``custom_components.tcl_matter.__init__``."""
+"""Tests for the integration lifecycle in ``custom_components.tcl_matter``."""
 
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from matter_server.common.models import EventType
 
 from custom_components.tcl_matter import (
     TclMatterRuntimeData,
-    _discover_tcl_nodes,
-    _get_matter_client,
     _node_vendor_id,
-    async_setup_entry,
-    async_unload_entry,
+    async_remove_config_entry_device,
 )
 from custom_components.tcl_matter.const import (
+    ATTR_FILTER_ALERT,
     DOMAIN,
     MATTER_DOMAIN,
+    NUM_TCL_FC03_DATA_ATTRS,
+    TCL_CLUSTER_FC03,
     TCL_VENDOR_ID,
 )
+from custom_components.tcl_matter.device import (
+    matter_device_identifier,
+    tcl_device_identifier,
+)
+
+from .conftest import FABRIC_ID
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from homeassistant.core import HomeAssistant
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+NODE_ID = 5
+LEGACY_IDENTIFIER = (MATTER_DOMAIN, str(NODE_ID))
+TCL_IDENTIFIER = (DOMAIN, f"{FABRIC_ID:016X}-{NODE_ID:016X}")
+MATTER_PARENT_IDENTIFIER = (
+    MATTER_DOMAIN,
+    f"deviceid_{FABRIC_ID:016X}-{NODE_ID:016X}-MatterNodeDevice",
+)
 
-async def _refresh_without_config_entry(self: object) -> None:
-    """Stand-in for ``async_config_entry_first_refresh`` for tests.
-
-    The real implementation requires the coordinator to have been constructed
-    with a ``config_entry`` argument, which the integration does not currently
-    do. This helper simply triggers a normal refresh and re-raises a
-    ``ConfigEntryNotReady`` if the refresh fails — the same observable
-    behavior the integration relies on.
-    """
-    await self.async_refresh()  # type: ignore[attr-defined]
-    if not self.last_update_success:  # type: ignore[attr-defined]
-        raise ConfigEntryNotReady(str(self.last_exception))  # type: ignore[attr-defined]
-
-
-@pytest.fixture
-def patch_first_refresh() -> Generator[None]:
-    """Patch the coordinator's first_refresh to bypass the config_entry check."""
-    with patch(
-        "custom_components.tcl_matter.coordinator.TclMatterCoordinator"
-        ".async_config_entry_first_refresh",
-        new=_refresh_without_config_entry,
-    ):
-        yield
+# Every entity unique id the integration creates for one node.
+UNIQUE_IDS = {
+    ("binary_sensor", "tcl_matter_5_bucket_full"),
+    ("binary_sensor", "tcl_matter_5_filter_alert"),
+    ("button", "tcl_matter_5_reset_filter"),
+    ("humidifier", "tcl_matter_5_dehumidifier"),
+    ("select", "tcl_matter_5_mode"),
+    ("sensor", "tcl_matter_5_current_humidity"),
+    ("sensor", "tcl_matter_5_error_codes"),
+}
 
 
-@pytest.fixture
-def patch_platform_forwarding() -> Generator[None]:
-    """Patch hass platform forward / unload helpers so we can drive setup directly.
-
-    The TCL Matter platforms exercise their own behavior in dedicated test
-    modules; here we only care about the ``__init__`` lifecycle, so the
-    platform fan-out is short-circuited.
-    """
-    with (
-        patch(
-            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
-            new=AsyncMock(return_value=True),
-        ),
-        patch(
-            "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
-            new=AsyncMock(return_value=True),
-        ),
-    ):
-        yield
+async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """Set the TCL entry up through Home Assistant and let it settle."""
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
 
 
-async def test_setup_entry_happy_path(
+def _entity_id(hass: HomeAssistant, platform: str, unique_id: str) -> str:
+    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
+    assert entity_id is not None, f"{platform} {unique_id} not registered"
+    return entity_id
+
+
+# ---------------------------------------------------------------------------
+# Setup and unload
+# ---------------------------------------------------------------------------
+
+
+async def test_setup_creates_every_entity(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
-    mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,
-    patch_first_refresh: object,
 ) -> None:
-    """One TCL node loads successfully and runtime_data is populated."""
-    assert await async_setup_entry(hass, mock_tcl_entry) is True
+    """Setup loads the entry, fills runtime_data and registers all platforms."""
+    await _setup(hass, mock_tcl_entry)
 
+    assert mock_tcl_entry.state is ConfigEntryState.LOADED
     runtime: TclMatterRuntimeData = mock_tcl_entry.runtime_data
-    assert isinstance(runtime, TclMatterRuntimeData)
-    assert runtime.matter_client is mock_matter_client
-    assert list(runtime.devices.keys()) == [5]
+    assert list(runtime.devices) == [NODE_ID]
+    registry = er.async_get(hass)
+    found = {
+        (e.domain, e.unique_id)
+        for e in er.async_entries_for_config_entry(registry, mock_tcl_entry.entry_id)
+    }
+    assert found == UNIQUE_IDS
+    state = hass.states.get(_entity_id(hass, "humidifier", "tcl_matter_5_dehumidifier"))
+    assert state is not None
+    assert state.attributes["humidity"] == 50
 
 
-async def test_setup_entry_matter_not_loaded(
+async def test_setup_without_matter_retries(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
 ) -> None:
-    """If the matter integration isn't loaded, raise ConfigEntryNotReady."""
-    with pytest.raises(ConfigEntryNotReady):
-        await async_setup_entry(hass, mock_tcl_entry)
+    """With no loaded matter entry the TCL entry retries instead of failing."""
+    with patch(
+        "homeassistant.setup.async_setup_component",
+        new=AsyncMock(return_value=True),
+    ):
+        await _setup(hass, mock_tcl_entry)
+    assert mock_tcl_entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_setup_entry_no_tcl_nodes_logs_warning(
+async def test_setup_with_no_tcl_nodes_warns_and_loads(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
     caplog: pytest.LogCaptureFixture,
-    patch_platform_forwarding: object,
-    patch_first_refresh: object,
 ) -> None:
-    """No TCL devices on fabric still results in a successful (empty) setup."""
+    """No TCL device on the fabric still loads, with a warning and no entities."""
     mock_matter_client.get_nodes.return_value = []
-
     with caplog.at_level(logging.WARNING, logger="custom_components.tcl_matter"):
-        result = await async_setup_entry(hass, mock_tcl_entry)
+        await _setup(hass, mock_tcl_entry)
+    assert mock_tcl_entry.state is ConfigEntryState.LOADED
+    assert any("No TCL Matter devices" in r.message for r in caplog.records)
+    registry = er.async_get(hass)
+    assert not er.async_entries_for_config_entry(registry, mock_tcl_entry.entry_id)
 
-    assert result is True
-    assert mock_tcl_entry.runtime_data.devices == {}
-    assert any("No TCL Matter devices" in rec.message for rec in caplog.records)
 
-
-async def test_setup_entry_ignores_non_tcl_nodes(
+async def test_setup_ignores_non_tcl_nodes(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
     mock_matter_node: MagicMock,
     non_tcl_matter_node: MagicMock,
-    patch_platform_forwarding: object,
-    patch_first_refresh: object,
 ) -> None:
-    """Nodes from other vendors are filtered out."""
-    mock_matter_client.get_nodes.return_value = [mock_matter_node, non_tcl_matter_node]
+    """Only TCL-vendor nodes are served."""
+    mock_matter_client.get_nodes.return_value = [non_tcl_matter_node, mock_matter_node]
+    await _setup(hass, mock_tcl_entry)
+    assert list(mock_tcl_entry.runtime_data.devices) == [NODE_ID]
 
-    assert await async_setup_entry(hass, mock_tcl_entry) is True
-    assert list(mock_tcl_entry.runtime_data.devices) == [mock_matter_node.node_id]
 
-
-async def test_unload_entry_clears_subscriptions(
+async def test_setup_retries_when_nothing_can_be_read(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,
-    patch_first_refresh: object,
 ) -> None:
-    """Unloading invokes every subscription teardown function exactly once."""
-    unsub = MagicMock()
-    mock_matter_client.subscribe_events.return_value = unsub
-
-    assert await async_setup_entry(hass, mock_tcl_entry) is True
-
-    runtime: TclMatterRuntimeData = mock_tcl_entry.runtime_data
-    assert unsub in runtime.unsubscribers
-
-    assert await async_unload_entry(hass, mock_tcl_entry) is True
-    unsub.assert_called_once_with()
-    assert runtime.unsubscribers == []
-
-
-async def test_unload_entry_tolerates_unsub_errors(
-    hass: HomeAssistant,
-    mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,
-    mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,
-    patch_first_refresh: object,
-) -> None:
-    """A raising unsubscriber should not break unload."""
-    bad_unsub = MagicMock(side_effect=RuntimeError("boom"))
-    mock_matter_client.subscribe_events.return_value = bad_unsub
-
-    assert await async_setup_entry(hass, mock_tcl_entry) is True
-    assert await async_unload_entry(hass, mock_tcl_entry) is True
-
-
-async def test_get_matter_client_runtime_data(hass: HomeAssistant) -> None:
-    """``_get_matter_client`` returns the modern ``runtime_data.adapter`` client."""
-    client = MagicMock()
-    entry = SimpleNamespace(
-        entry_id="x",
-        runtime_data=SimpleNamespace(adapter=SimpleNamespace(matter_client=client)),
-    )
-    with patch.object(
-        hass.config_entries, "async_entries", MagicMock(return_value=[entry])
-    ):
-        assert _get_matter_client(hass) is client
-
-
-async def test_get_matter_client_legacy_data(hass: HomeAssistant) -> None:
-    """Legacy ``hass.data["matter"][entry_id]`` path is still supported."""
-    client = MagicMock()
-    entry = SimpleNamespace(entry_id="legacy", runtime_data=None)
-    hass.data[MATTER_DOMAIN] = {
-        "legacy": SimpleNamespace(adapter=SimpleNamespace(matter_client=client)),
-    }
-    with patch.object(
-        hass.config_entries, "async_entries", MagicMock(return_value=[entry])
-    ):
-        assert _get_matter_client(hass) is client
-
-
-async def test_get_matter_client_not_loaded(hass: HomeAssistant) -> None:
-    """Returns None when no matter entries exist."""
-    with patch.object(hass.config_entries, "async_entries", MagicMock(return_value=[])):
-        assert _get_matter_client(hass) is None
-
-
-async def test_node_vendor_id_via_device_info() -> None:
-    """The primary path reads ``node.device_info.vendorID``."""
-    node = SimpleNamespace(
-        device_info=SimpleNamespace(vendorID=TCL_VENDOR_ID),
-        get_attribute_value=lambda *_: None,
-    )
-    assert _node_vendor_id(node) == TCL_VENDOR_ID
-
-
-async def test_node_vendor_id_via_get_attribute_value() -> None:
-    """Falls back to ``get_attribute_value(0, 0x0028, 2)`` when device_info empty."""
-    calls: list[tuple[int, int, int]] = []
-
-    def _get_attr(endpoint: int, cluster: int, attr: int) -> int | None:
-        calls.append((endpoint, cluster, attr))
-        if (endpoint, cluster, attr) == (0, 0x0028, 2):
-            return TCL_VENDOR_ID
-        return None
-
-    node = SimpleNamespace(
-        device_info=SimpleNamespace(),  # no vendorID/vendor_id/vendorId
-        get_attribute_value=_get_attr,
-    )
-    assert _node_vendor_id(node) == TCL_VENDOR_ID
-    assert (0, 0x0028, 2) in calls
-
-
-async def test_node_vendor_id_legacy_attribute() -> None:
-    """Falls back to legacy ``node.vendor_id`` when other paths fail."""
-    node = SimpleNamespace(
-        device_info=None,
-        get_attribute_value=lambda *_: None,
-        vendor_id=TCL_VENDOR_ID,
-    )
-    assert _node_vendor_id(node) == TCL_VENDOR_ID
-
-
-async def test_node_vendor_id_unknown_returns_none() -> None:
-    """Returns None when none of the lookup paths produce a vendor id."""
-    node = SimpleNamespace(
-        device_info=SimpleNamespace(),
-        get_attribute_value=lambda *_: None,
-    )
-    assert _node_vendor_id(node) is None
-
-
-async def test_node_vendor_id_get_attribute_raises_is_handled() -> None:
-    """If get_attribute_value raises, fall through to legacy path."""
-
-    def _raise(*_: object) -> None:
-        msg = "transport error"
-        raise RuntimeError(msg)
-
-    node = SimpleNamespace(
-        device_info=None,
-        get_attribute_value=_raise,
-        vendor_id=TCL_VENDOR_ID,
-    )
-    assert _node_vendor_id(node) == TCL_VENDOR_ID
-
-
-async def test_discover_tcl_nodes_filters_by_vendor(
-    mock_matter_client: MagicMock,
-    mock_matter_node: MagicMock,
-    non_tcl_matter_node: MagicMock,
-) -> None:
-    """Only TCL-vendor nodes are returned."""
-    mock_matter_client.get_nodes.return_value = [mock_matter_node, non_tcl_matter_node]
-    nodes = _discover_tcl_nodes(mock_matter_client)
-    assert nodes == [mock_matter_node]
-
-
-async def test_discover_tcl_nodes_falls_back_to_nodes_dict(
-    mock_matter_node: MagicMock,
-) -> None:
-    """If ``get_nodes`` is missing, fall back to the ``nodes`` dict property."""
-    client = MagicMock(spec=["nodes"])
-    client.nodes = {mock_matter_node.node_id: mock_matter_node}
-    nodes = _discover_tcl_nodes(client)
-    assert nodes == [mock_matter_node]
-
-
-async def test_setup_entry_propagates_first_refresh_failure(
-    hass: HomeAssistant,
-    mock_tcl_entry: MockConfigEntry,
-    setup_matter_dependency: MockConfigEntry,
-    mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,
-    patch_first_refresh: object,
-) -> None:
-    """A failing initial poll surfaces as ConfigEntryNotReady.
-
-    The coordinator now reads via ``matter_client.read_attribute``; making
-    that raise is the modern way to simulate a downed matter-server.
-    """
+    """If the first read fails the entry goes to setup-retry."""
     mock_matter_client.read_attribute = AsyncMock(side_effect=RuntimeError("down"))
+    await _setup(hass, mock_tcl_entry)
+    assert mock_tcl_entry.state is ConfigEntryState.SETUP_RETRY
 
-    with pytest.raises(ConfigEntryNotReady):
-        await async_setup_entry(hass, mock_tcl_entry)
 
-
-async def test_setup_entry_falls_back_to_subscribe_when_subscribe_events_missing(
+async def test_unload_releases_every_subscription(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,
-    patch_first_refresh: object,
 ) -> None:
-    """If ``subscribe_events`` is unavailable, ``subscribe`` is used instead."""
-    del mock_matter_client.subscribe_events
-    unsub = MagicMock()
-    mock_matter_client.subscribe = MagicMock(return_value=unsub)
+    """Unloading unsubscribes everything that setup subscribed."""
+    await _setup(hass, mock_tcl_entry)
+    assert mock_matter_client.subscriptions
+    assert all(s.active for s in mock_matter_client.subscriptions)
 
-    assert await async_setup_entry(hass, mock_tcl_entry) is True
-    runtime: TclMatterRuntimeData = mock_tcl_entry.runtime_data
-    assert unsub in runtime.unsubscribers
+    assert await hass.config_entries.async_unload(mock_tcl_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_tcl_entry.state is ConfigEntryState.NOT_LOADED
+    assert not any(s.active for s in mock_matter_client.subscriptions)
 
 
-async def test_setup_entry_handles_no_subscription_api(
+# ---------------------------------------------------------------------------
+# Push subscriptions
+# ---------------------------------------------------------------------------
+
+
+async def test_subscribes_per_attribute_with_node_and_path_filters(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
-    patch_platform_forwarding: object,
-    patch_first_refresh: object,
 ) -> None:
-    """Setup still succeeds when neither subscribe* method exists."""
-    del mock_matter_client.subscribe_events
-    del mock_matter_client.subscribe
+    """Each cluster attribute gets its own filtered ATTRIBUTE_UPDATED subscription."""
+    await _setup(hass, mock_tcl_entry)
+    attr_subs = {
+        s.attr_path_filter
+        for s in mock_matter_client.subscriptions
+        if s.event_filter is EventType.ATTRIBUTE_UPDATED and s.node_filter == NODE_ID
+    }
+    expected = {f"1/{TCL_CLUSTER_FC03}/{a}" for a in range(NUM_TCL_FC03_DATA_ATTRS)}
+    assert expected <= attr_subs
+    assert "1/6/0" in attr_subs  # OnOff
+    events = {s.event_filter for s in mock_matter_client.subscriptions}
+    assert {EventType.NODE_UPDATED, EventType.NODE_ADDED, EventType.NODE_REMOVED} <= (
+        events
+    )
 
-    assert await async_setup_entry(hass, mock_tcl_entry) is True
-    assert mock_tcl_entry.runtime_data.unsubscribers == []
 
-
-async def test_setup_entry_forwards_to_platforms(
+async def test_pushed_value_updates_the_entity(
     hass: HomeAssistant,
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
-    patch_first_refresh: object,
+    mock_matter_client: MagicMock,
 ) -> None:
-    """async_forward_entry_setups is called once with all our platforms."""
-    with patch(
-        "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
-        new=AsyncMock(return_value=True),
-    ) as forward:
-        assert await async_setup_entry(hass, mock_tcl_entry) is True
+    """A real-shaped client callback, (event, value), reaches the entity state."""
+    await _setup(hass, mock_tcl_entry)
+    entity_id = _entity_id(hass, "binary_sensor", "tcl_matter_5_filter_alert")
+    assert hass.states.get(entity_id).state == "off"
 
-    forward.assert_awaited_once()
-    # When patching a bound method via the class, the call args include self.
-    args = forward.await_args.args
-    platforms = args[-1]
-    assert "humidifier" in {str(p) for p in platforms}
+    sub = next(
+        s
+        for s in mock_matter_client.subscriptions
+        if s.attr_path_filter == f"1/{TCL_CLUSTER_FC03}/{ATTR_FILTER_ALERT}"
+    )
+    pushed_value = True  # the client passes only (event, value)
+    sub.callback(EventType.ATTRIBUTE_UPDATED, pushed_value)
+    await hass.async_block_till_done()
+
+    assert hass.states.get(entity_id).state == "on"
 
 
-async def test_domain_constant() -> None:
-    """Sanity: the domain constant matches manifest."""
-    assert DOMAIN == "tcl_matter"
+# ---------------------------------------------------------------------------
+# Reload triggers
+# ---------------------------------------------------------------------------
+
+
+def _callback_for(client: MagicMock, event: EventType) -> Any:
+    return next(s.callback for s in client.subscriptions if s.event_filter is event)
+
+
+async def test_new_tcl_node_schedules_reload(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    setup_matter_dependency: MockConfigEntry,
+    mock_matter_client: MagicMock,
+    make_tcl_device: Any,
+    non_tcl_matter_node: MagicMock,
+) -> None:
+    """A TCL node added later reloads the entry; others and known nodes do not."""
+    await _setup(hass, mock_tcl_entry)
+    added = _callback_for(mock_matter_client, EventType.NODE_ADDED)
+    new_node = make_tcl_device(8).node
+    known_node = make_tcl_device(NODE_ID).node
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload_mock:
+        added(EventType.NODE_ADDED, non_tcl_matter_node)
+        added(EventType.NODE_ADDED, known_node)
+        reload_mock.assert_not_called()
+        added(EventType.NODE_ADDED, new_node)
+        reload_mock.assert_called_once_with(mock_tcl_entry.entry_id)
+
+
+async def test_removed_tcl_node_schedules_reload(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    setup_matter_dependency: MockConfigEntry,
+    mock_matter_client: MagicMock,
+) -> None:
+    """Removing a node we serve reloads the entry; an unknown node does not."""
+    await _setup(hass, mock_tcl_entry)
+    removed = _callback_for(mock_matter_client, EventType.NODE_REMOVED)
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload_mock:
+        removed(EventType.NODE_REMOVED, 99)
+        reload_mock.assert_not_called()
+        removed(EventType.NODE_REMOVED, NODE_ID)
+        reload_mock.assert_called_once_with(mock_tcl_entry.entry_id)
+
+
+async def test_matter_integration_leaving_loaded_state_schedules_reload(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    setup_matter_dependency: MockConfigEntry,
+) -> None:
+    """When matter reloads (new client), the TCL entry reloads to pick it up."""
+    await _setup(hass, mock_tcl_entry)
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload_mock:
+        setup_matter_dependency.mock_state(hass, ConfigEntryState.NOT_LOADED)
+        reload_mock.assert_called_once_with(mock_tcl_entry.entry_id)
+
+        reload_mock.reset_mock()
+        setup_matter_dependency.mock_state(hass, ConfigEntryState.LOADED)
+        reload_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Devices
+# ---------------------------------------------------------------------------
+
+
+async def test_device_uses_own_identifier_and_links_to_matter_device(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    setup_matter_dependency: MockConfigEntry,
+) -> None:
+    """The TCL device has its own identifier and is a child of the matter device."""
+    registry = dr.async_get(hass)
+    parent = registry.async_get_or_create(
+        config_entry_id=setup_matter_dependency.entry_id,
+        identifiers={MATTER_PARENT_IDENTIFIER},
+    )
+    await _setup(hass, mock_tcl_entry)
+
+    device = registry.async_get_device_by_identifier(
+        TCL_IDENTIFIER, mock_tcl_entry.entry_id
+    )
+    assert device is not None
+    assert device.via_device_id == parent.id
+    assert device.model_id == "32770"
+    assert device.manufacturer == "TCL"
+
+
+async def test_legacy_device_identifier_is_migrated_in_place(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    setup_matter_dependency: MockConfigEntry,
+) -> None:
+    """A 0.5.x device keeps its id (and area) but moves to the new identifier."""
+    registry = dr.async_get(hass)
+    legacy = registry.async_get_or_create(
+        config_entry_id=mock_tcl_entry.entry_id,
+        identifiers={LEGACY_IDENTIFIER},
+        name="TCL Dehumidifier",
+    )
+    registry.async_update_device(legacy.id, area_id="attic")
+    await _setup(hass, mock_tcl_entry)
+
+    assert (
+        registry.async_get_device_by_identifier(
+            LEGACY_IDENTIFIER, mock_tcl_entry.entry_id
+        )
+        is None
+    )
+    migrated = registry.async_get_device_by_identifier(
+        TCL_IDENTIFIER, mock_tcl_entry.entry_id
+    )
+    assert migrated is not None
+    assert migrated.id == legacy.id
+    assert migrated.area_id == "attic"
+
+
+async def test_remove_device_only_when_not_served(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    setup_matter_dependency: MockConfigEntry,
+) -> None:
+    """A device for a node we serve can't be removed; a stray one can."""
+    await _setup(hass, mock_tcl_entry)
+    registry = dr.async_get(hass)
+    active = registry.async_get_device_by_identifier(
+        TCL_IDENTIFIER, mock_tcl_entry.entry_id
+    )
+    stray = registry.async_get_or_create(
+        config_entry_id=mock_tcl_entry.entry_id,
+        identifiers={(DOMAIN, "stray")},
+    )
+    assert await async_remove_config_entry_device(hass, mock_tcl_entry, active) is False
+    assert await async_remove_config_entry_device(hass, mock_tcl_entry, stray) is True
+
+
+def test_matter_identifier_matches_home_assistants_own_helper() -> None:
+    """Our copy of the matter device identifier must agree with HA's helper."""
+    helpers = pytest.importorskip("homeassistant.components.matter.helpers")
+    server_info = MagicMock(compressed_fabric_id=FABRIC_ID)
+    client = MagicMock(server_info=server_info)
+    assert matter_device_identifier(client, NODE_ID) == (
+        helpers.get_node_device_identifier(server_info, NODE_ID)
+    )
+
+
+def test_identifiers_without_a_fabric_id() -> None:
+    """Without a fabric id there is no parent link and a bare-node own identifier."""
+    client = MagicMock()  # server_info.compressed_fabric_id is a MagicMock
+    assert matter_device_identifier(client, NODE_ID) is None
+    assert tcl_device_identifier(client, NODE_ID) == (DOMAIN, str(NODE_ID))
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def test_node_vendor_id_reads_device_info() -> None:
+    """The vendor id comes from the node's BasicInformation."""
+    node = MagicMock()
+    node.device_info.vendorID = TCL_VENDOR_ID
+    assert _node_vendor_id(node) == TCL_VENDOR_ID
+
+
+@pytest.mark.parametrize("vendor", [None, "x", object()])
+def test_node_vendor_id_unreadable_is_none(vendor: object) -> None:
+    """Missing or non-numeric vendor ids give None."""
+    node = MagicMock()
+    node.device_info.vendorID = vendor
+    assert _node_vendor_id(node) is None
+    assert _node_vendor_id(object()) is None

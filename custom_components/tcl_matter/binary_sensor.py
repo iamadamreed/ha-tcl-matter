@@ -52,11 +52,6 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-# Backwards-compatible private names (tests and callers import these).
-_coerce_bool = coerce_bool
-_parse_error_codes = parse_json_list
-
-
 class TclBucketFullBinarySensor(TclMatterEntity, BinarySensorEntity):
     """
     Water bucket full indicator.
@@ -82,10 +77,10 @@ class TclBucketFullBinarySensor(TclMatterEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return True when the bucket is full."""
-        attr_3 = _coerce_bool(self._node_data.get(ATTR_BUCKET_FULL))
+        attr_3 = coerce_bool(self._node_data.get(ATTR_BUCKET_FULL))
         if attr_3 is True:
             return True
-        codes = _parse_error_codes(self._node_data.get(ATTR_ERROR_CODES))
+        codes = parse_json_list(self._node_data.get(ATTR_ERROR_CODES))
         if codes is None:
             return attr_3  # fall back to the bool reading (may be None)
         return ERROR_CODE_BUCKET_FULL in codes
@@ -110,4 +105,4 @@ class TclFilterAlertBinarySensor(TclMatterEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return True when the filter alert is set."""
-        return _coerce_bool(self._node_data.get(ATTR_FILTER_ALERT))
+        return coerce_bool(self._node_data.get(ATTR_FILTER_ALERT))

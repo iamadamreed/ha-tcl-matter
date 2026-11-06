@@ -34,7 +34,6 @@ ATTR_BUCKET_FULL: Final = 3  # bool — dedicated water-bucket flag.
 # alert and the unit beeps (it also beeps when True is written). The cluster has
 # no command for it, so a reset is this write.
 ATTR_FILTER_ALERT: Final = 4
-ATTR_LOCK_OR_FILTER: Final = ATTR_FILTER_ALERT  # deprecated alias
 ATTR_ERROR_CODES: Final = 5  # string — JSON-encoded list, e.g. "[]" or "[5]"
 ATTR_FEATURE_SET: Final = 6  # string — JSON-encoded list, e.g. "[3]"
 
@@ -75,23 +74,19 @@ ONOFF_ATTR_ON_OFF: Final = 0
 MIN_HUMIDITY: Final = 35
 MAX_HUMIDITY: Final = 85
 
-# Fallback poll interval when push subscription is unavailable
-POLL_INTERVAL_SECONDS: Final = 30
+# Safety-net poll interval. Push updates (see __init__) normally arrive first.
+POLL_INTERVAL_SECONDS: Final = 60
+
+# Timeouts for matter-server round trips (seconds).
+READ_TIMEOUT_SECONDS: Final = 10
+WRITE_TIMEOUT_SECONDS: Final = 15
+
+# Consecutive failed polls before a node's entities go unavailable.
+UNAVAILABLE_AFTER_FAILURES: Final = 2
 
 # Matter integration domain (built-in)
 MATTER_DOMAIN: Final = "matter"
 
-# Standard Matter cluster + attribute IDs we read directly
-BASIC_INFORMATION_CLUSTER: Final = 0x0028
-BASIC_INFORMATION_VENDOR_ID_ATTR: Final = 2
-
 # Number of TCL_CLUSTER_FC03 data attributes (0..6) we surface as entities.
 # Cluster metadata attributes (>=0xFFF8) are intentionally skipped.
 NUM_TCL_FC03_DATA_ATTRS: Final = 7
-
-# Path-string format used by the matter-server to identify attribute tuples.
-# "endpoint/cluster/attr" — three integer fields separated by slashes.
-ATTR_PATH_PARTS: Final = 3
-
-# ATTRIBUTE_UPDATED push events carry a (node_id, path, value) tuple.
-ATTR_EVENT_TUPLE_LEN: Final = 3

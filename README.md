@@ -25,7 +25,7 @@ The dehumidifier-specific data **is** present on the device — just inside TCL'
 
 ## Requirements
 
-- Home Assistant **2026.5.0** or newer
+- Home Assistant **2026.8.0** or newer
 - The TCL dehumidifier already paired to the built-in Matter integration
 - HACS installed
 
@@ -62,10 +62,11 @@ If you have a different TCL Matter dehumidifier, [open an issue][issue_tracker] 
 
 ## Architecture notes
 
-- Coexists with the built-in Matter integration on the same device card via shared `("matter", node_id)` device identifier.
+- Runs alongside the built-in Matter integration. Each TCL node gets its own device (identifier `("tcl_matter", "<fabric>-<node>")`), linked to the Matter device with `via_device_id`. Devices created by 0.5.x under the `("matter", "<node>")` identifier are migrated in place on upgrade, keeping their area and name.
 - Reads/writes attributes through the loaded `matter_client` — no separate Matter pairing, no cloud, no TCL Home dependency.
-- **Live reads, not stale cache.** Vendor cluster attributes are fetched fresh from the matter-server itself via `matter_client.send_command("read_attribute", …)` — bypassing the python-matter-server local cache (which is never refreshed for clusters it lacks decoders for). Subscribes to push updates in parallel; the 30-second poll is a safety net.
-- **Anti-loop write semantics.** Each writable attribute has a per-instance `asyncio.Lock`, and writes are deduplicated against the cached value. An automation that fires `set_humidity(45)` 100 times against a device already at 45 results in zero device round trips — the integration cannot be the source of a runaway loop.
+- **Live reads, not stale cache.** Vendor cluster attributes are fetched fresh from the matter-server itself with `matter_client.read_attribute(…)`, bypassing the client's local cache (which is not refreshed for clusters it lacks decoders for). Each attribute also has its own push subscription, and a 60-second poll is the safety net. Every round trip has a timeout, and a node is marked unavailable after two failed polls.
+- **Anti-loop write semantics.** Writes to one attribute are serialised by a lock, and a write is skipped when a live read shows the device already holds the value (the cache is not trusted for this, since it can lag a change made at the unit). An automation that fires `set_humidity(45)` 100 times against a device already at 45 sends no writes. A write the device rejects, or that times out, raises an error instead of being cached as if it worked.
+- **Lifecycle.** The entry reloads itself when the Matter integration reloads (it replaces its client), and when a TCL node is added or removed.
 
 ## Server-side requirement
 

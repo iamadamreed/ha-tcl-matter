@@ -37,6 +37,7 @@ max-complexity = 25
     "S101",    # `assert` is the standard pytest idiom
     "SLF001",  # tests poke private state to set up fixtures
     "PLR2004", # magic numbers are inherent to assertions
+    "PLR0917", # fixtures make long positional parameter lists normal
     "ARG001",  # fixture-injected parameters are typed as unused
     "ARG002",
     "D",       # not requiring docstrings on every test function

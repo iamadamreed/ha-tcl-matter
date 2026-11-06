@@ -1,5 +1,7 @@
--r requirements.txt
-pytest-homeassistant-custom-component==0.13.300
-pytest-asyncio>=0.23
+# Versions match Home Assistant 2026.10: pytest-homeassistant-custom-component
+# pins homeassistant, and HA's matter integration pins the matter client below
+# (see homeassistant/components/matter/manifest.json).
+pytest-homeassistant-custom-component==0.13.375
 pytest-cov>=5.0
-syrupy>=4.6
+matter-python-client==1.4.0
+matter-ble-proxy==0.7.1

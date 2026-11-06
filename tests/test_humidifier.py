@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.tcl_matter.const import (
     ATTR_CURRENT_HUMIDITY,
@@ -35,7 +33,7 @@ def _make_entity(
     matter_client: MagicMock,
 ) -> TclDehumidifier:
     """Construct a TclDehumidifier wired to the primed test coordinator."""
-    return TclDehumidifier(primed_coordinator, matter_client, NODE_ID)
+    return TclDehumidifier(primed_coordinator, NODE_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -217,17 +215,16 @@ async def test_async_set_mode_writes_int_for_known_mode(
     )
 
 
-async def test_async_set_mode_unknown_logs_warning(
+async def test_async_set_mode_unknown_raises_validation_error(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """An unknown mode logs a warning and does not write."""
+    """An unknown mode is a user error: raise, and write nothing."""
     entity = _make_entity(primed_coordinator, mock_matter_client)
-    with caplog.at_level(logging.WARNING, logger="custom_components.tcl_matter"):
+    with pytest.raises(ServiceValidationError) as err:
         await entity.async_set_mode("turbo")
+    assert err.value.translation_key == "unknown_mode"
     mock_matter_client.write_attribute.assert_not_called()
-    assert any("Unknown TCL mode" in rec.message for rec in caplog.records)
 
 
 async def test_write_failure_raises_without_cache_update(
@@ -283,60 +280,71 @@ async def test_write_dedup_per_attribute_independent(
     assert mock_matter_client.write_attribute.await_count == 2
 
 
-async def test_per_attribute_lock_serialises_concurrent_writes(
+# ---------------------------------------------------------------------------
+# Power: OnOff cluster
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("on_off", "expected"), [(True, True), (False, False)])
+def test_is_on_follows_onoff_cluster(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+    on_off: bool,
+    expected: bool,
+) -> None:
+    """Power state comes from the OnOff cluster when it can be read."""
+    node = primed_coordinator.get_node(NODE_ID)
+    node.node_data.attributes["1/6/0"] = on_off
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    assert entity.is_on is expected
+
+
+def test_is_on_survives_a_failing_node_lookup(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """Two concurrent writes to the same attr must not interleave.
-
-    This is the core anti-loop guarantee: even if multiple automations
-    fire ``set_humidity`` simultaneously, the second one observes the
-    cache update from the first and dedupes (no spurious round-trip).
-    """
-    inflight: list[int] = []
-    max_inflight = 0
-
-    async def _slow_write(**kwargs: Any) -> None:
-        nonlocal max_inflight
-        inflight.append(1)
-        max_inflight = max(max_inflight, len(inflight))
-        await asyncio.sleep(0.01)
-        inflight.pop()
-
-    mock_matter_client.write_attribute = AsyncMock(side_effect=_slow_write)
+    """If the node cache lookup raises, fall back to the mode heuristic."""
+    node = primed_coordinator.get_node(NODE_ID)
+    node.get_attribute_value = MagicMock(side_effect=RuntimeError("x"))
     entity = _make_entity(primed_coordinator, mock_matter_client)
-
-    # Three concurrent writes to attr 1. The lock serialises them. The mock's
-    # live read is static, so none of them dedupes against the device.
-    await asyncio.gather(
-        entity.async_set_humidity(60),
-        entity.async_set_humidity(60),
-        entity.async_set_humidity(60),
-    )
-
-    assert max_inflight == 1  # never overlapped
-    assert mock_matter_client.write_attribute.await_count == 3
+    assert entity.is_on is True  # mode attribute is a known value
 
 
-async def test_per_attribute_lock_independent_across_attrs(
+async def test_turn_off_sends_onoff_command(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """Locks are per-attribute, so set_humidity and set_mode can overlap."""
-    seen: list[str] = []
-
-    async def _write(**kwargs: Any) -> None:
-        # Track the attribute path order to confirm both calls executed.
-        seen.append(kwargs["attribute_path"])
-        await asyncio.sleep(0.005)
-
-    mock_matter_client.write_attribute = AsyncMock(side_effect=_write)
+    """turn_off sends the standard OnOff Off command."""
+    mock_matter_client.send_command = AsyncMock()
     entity = _make_entity(primed_coordinator, mock_matter_client)
-
-    await asyncio.gather(
-        entity.async_set_humidity(60),
-        entity.async_set_mode("continue"),
+    await entity.async_turn_off()
+    mock_matter_client.send_command.assert_awaited_once_with(
+        "device_command",
+        node_id=NODE_ID,
+        endpoint_id=1,
+        cluster_id=6,
+        command_name="Off",
+        payload={},
     )
-    assert EXPECTED_TARGET_PATH in seen
-    assert EXPECTED_MODE_PATH in seen
-    assert mock_matter_client.write_attribute.await_count == 2
+
+
+async def test_turn_on_sends_onoff_command(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+) -> None:
+    """turn_on sends the standard OnOff On command."""
+    mock_matter_client.send_command = AsyncMock()
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    await entity.async_turn_on()
+    assert mock_matter_client.send_command.await_args.kwargs["command_name"] == "On"
+
+
+async def test_turn_on_failure_raises(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+) -> None:
+    """A failed OnOff command raises HomeAssistantError."""
+    mock_matter_client.send_command = AsyncMock(side_effect=RuntimeError("x"))
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    with pytest.raises(HomeAssistantError):
+        await entity.async_turn_on()
