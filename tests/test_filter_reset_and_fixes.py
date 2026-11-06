@@ -91,18 +91,28 @@ def test_device_identifier_none_without_fabric_id() -> None:
     assert _matter_device_identifier(object(), 161) is None
 
 
-def test_entity_uses_matter_identifier_when_available(
+def test_entity_links_to_matter_device_via_device(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """With a fabric id the entity joins the matter device and sets no name."""
+    """With a fabric id the device is a child of the matter integration's device."""
     mock_matter_client.server_info.compressed_fabric_id = 0xABC
     entity = TclCurrentHumiditySensor(primed_coordinator, NODE_ID)
     info = entity.device_info
-    assert info["identifiers"] == {
-        ("matter", f"deviceid_{0xABC:016X}-{NODE_ID:016X}-MatterNodeDevice")
-    }
-    assert "name" not in info
+    assert info["identifiers"] == {("matter", str(NODE_ID))}
+    assert info["via_device"] == (
+        "matter",
+        f"deviceid_{0xABC:016X}-{NODE_ID:016X}-MatterNodeDevice",
+    )
+    assert info["name"]
+
+
+def test_entity_has_no_parent_link_without_fabric_id(
+    primed_coordinator: TclMatterCoordinator,
+) -> None:
+    """Without a usable fabric id the device stands alone."""
+    entity = TclCurrentHumiditySensor(primed_coordinator, NODE_ID)
+    assert entity.device_info["via_device"] is None
 
 
 def test_entity_unavailable_when_node_unreachable(
