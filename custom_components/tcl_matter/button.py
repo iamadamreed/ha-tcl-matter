@@ -1,7 +1,8 @@
 """
 Button platform for TCL Matter dehumidifiers.
 
-The H50D44W has no Matter command to reset its filter reminder. The alert is
+The unit (verified on a T50DC9SPB, product ID 0x8002) has no Matter command
+to reset its filter reminder. The alert is
 a plain boolean (attr 4 on cluster 0x1334FC03), and writing ``False`` clears
 it; the unit beeps to confirm. This button performs that write, but only
 when the alert is set: if the device already reports it clear, no write is sent

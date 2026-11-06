@@ -11,7 +11,7 @@ device with ``via_device_id``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import partial
+from functools import partial, wraps
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -31,7 +31,7 @@ from .const import (
     TCL_VENDOR_ID,
 )
 from .coordinator import TclMatterCoordinator
-from .device import async_migrate_devices, tcl_device_identifier
+from .device import async_migrate_devices, async_sync_device_info, tcl_device_identifier
 
 if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import DeviceEntry
@@ -78,7 +78,8 @@ def _node_vendor_id(node: Any) -> int | None:
     """Return the BasicInformation vendor id of a matter node, if readable."""
     try:
         return int(node.device_info.vendorID)
-    except AttributeError, TypeError, ValueError:
+    # A node whose interview failed has no endpoint 0, which raises KeyError.
+    except AttributeError, KeyError, TypeError, ValueError:
         return None
 
 
@@ -114,6 +115,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) ->
     entry.runtime_data = TclMatterRuntimeData(coordinator=coordinator, devices=devices)
 
     _subscribe(hass, entry, matter_entry, matter_client, coordinator, devices)
+    if matter_entry.state is not ConfigEntryState.LOADED:
+        # The matter integration reloaded while this entry was starting, so the
+        # client above is already dead. Retry with the new one.
+        msg = "matter integration reloaded during setup"
+        raise ConfigEntryNotReady(msg)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -134,10 +140,14 @@ def _subscribe(  # noqa: PLR0913, PLR0917
     attribute gets its own subscription with the node and attribute bound in.
     Every subscription is released through ``entry.async_on_unload``.
     """
-    subscribe = matter_client.subscribe_events
+
+    def subscribe(callback_fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Subscribe, wrapping the callback so it can never raise into the client."""
+        return matter_client.subscribe_events(_safe(callback_fn), *args, **kwargs)
 
     for node_id in devices:
-        for attr_id in range(NUM_TCL_FC03_DATA_ATTRS):
+        # Attribute 6 (feature set) is read by the poll but nothing displays it.
+        for attr_id in range(NUM_TCL_FC03_DATA_ATTRS - 1):
             entry.async_on_unload(
                 subscribe(
                     partial(coordinator.handle_attribute_update, node_id, attr_id),
@@ -160,7 +170,7 @@ def _subscribe(  # noqa: PLR0913, PLR0917
         )
         entry.async_on_unload(
             subscribe(
-                coordinator.handle_state_change,
+                partial(_on_node_updated, hass, entry, matter_client, coordinator),
                 EventType.NODE_UPDATED,
                 node_filter=node_id,
             )
@@ -195,6 +205,40 @@ def _subscribe(  # noqa: PLR0913, PLR0917
     entry.async_on_unload(matter_entry.async_on_state_change(_on_matter_state_change))
 
 
+@callback
+def _on_node_updated(
+    hass: HomeAssistant,
+    entry: TclMatterConfigEntry,
+    matter_client: Any,
+    coordinator: TclMatterCoordinator,
+    _event: Any,
+    node: Any,
+) -> None:
+    """Re-render entities and copy firmware versions after a node update."""
+    coordinator.handle_state_change()
+    async_sync_device_info(hass, entry, matter_client, node)
+
+
+def _safe(callback_fn: Any) -> Any:
+    """
+    Wrap a subscription callback so an exception is logged, not raised.
+
+    The matter client calls subscribers from its own dispatch loop. An
+    exception there is treated as a client failure and makes Home Assistant
+    reload the whole matter integration.
+    """
+
+    @wraps(callback_fn)
+    def _wrapper(*args: Any, **kwargs: Any) -> None:
+        try:
+            callback_fn(*args, **kwargs)
+        # Defensive: nothing here may propagate into the matter client.
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Error handling a matter event")
+
+    return _wrapper
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -> bool:
     """Unload a TCL Matter config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -206,10 +250,13 @@ async def async_remove_config_entry_device(
     device_entry: DeviceEntry,
 ) -> bool:
     """Allow removing a device unless it belongs to a node we currently serve."""
-    client = entry.runtime_data.coordinator.matter_client
+    runtime = getattr(entry, "runtime_data", None)
+    if runtime is None:
+        return True  # not loaded, so nothing is being served
+    client = runtime.coordinator.matter_client
     active = {
         identifier
-        for node_id in entry.runtime_data.devices
+        for node_id in runtime.devices
         for identifier in (
             tcl_device_identifier(client, node_id),
             (MATTER_DOMAIN, str(node_id)),

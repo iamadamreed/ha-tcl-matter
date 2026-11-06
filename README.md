@@ -13,19 +13,20 @@ The dehumidifier-specific data **is** present on the device — just inside TCL'
 
 ## Features
 
-- 💧 `humidifier.tcl_dehumidifier` — target humidity (35–85 %), mode select
-- 📊 `sensor.tcl_dehumidifier_current_humidity` — ambient RH from the unit's onboard sensor
-- 🪣 `binary_sensor.tcl_dehumidifier_water_bucket_full` — alerts when bucket fills (reads error code 5 on H50D44W; falls back to the dedicated bool for any firmware that ever wires it up)
-- 🧼 `binary_sensor.tcl_dehumidifier_filter` — filter-clean alert (attribute 4 of the vendor cluster)
-- 🔄 `button.tcl_dehumidifier_reset_filter` — clears the filter alert by writing `False` to that attribute. The H50D44W has no Matter command for it; the unit beeps when the alert is cleared (verified on hardware). If the alert is already clear the button sends nothing, so it stays silent: a beep means a reset happened
-- 🔗 The device is linked to the built-in Matter device (shown as connected via it; needs HA 2026.8+). HA 2026 keeps one device per integration, so the two cannot be merged into one card
-- ⏻ The dehumidifier entity follows the real power state (Matter OnOff cluster) and can be turned on and off
-- ⚠️ `sensor.tcl_dehumidifier_error_codes` — diagnostic; known codes: **5 = water bucket full**
-- 🎛️ `select.tcl_dehumidifier_mode` — direct mode control (Set / Continue / Comfort / Smart / Dry)
+Entity names below are shown as they appear in the UI; entity IDs are generated from the device name and depend on what your unit is called.
+
+- 💧 **Dehumidifier** (`humidifier`) — target humidity (35–85 %), mode, and on/off from the real power state (Matter OnOff cluster)
+- 📊 **Current humidity** (`sensor`) — ambient RH from the unit's onboard sensor
+- 🪣 **Water bucket** (`binary_sensor`) — alerts when the bucket fills (reads error code 5 on product ID `0x8002`; falls back to the dedicated bool for any firmware that ever wires it up)
+- 🧼 **Filter** (`binary_sensor`) — filter-clean alert (attribute 4 of the vendor cluster)
+- 🔄 **Reset filter** (`button`) — clears the filter alert by writing `False` to that attribute. The unit has no Matter command for it; it beeps when the alert is cleared (verified on hardware). If the alert is already clear the button sends nothing, so it stays silent: a beep means a reset happened
+- ⚠️ **Error codes** (`sensor`, diagnostic) — known codes: **5 = water bucket full**
+- 🎛️ **Mode** (`select`) — direct mode control (Set / Continue / Comfort / Smart / Dry)
+- 🔗 The device is linked to the built-in Matter device ("connected via"). HA 2026 keeps one device per integration, so the two cannot be merged into one card
 
 ## Requirements
 
-- Home Assistant **2026.8.0** or newer
+- Home Assistant **2026.10.0** or newer (the version the test suite runs against)
 - The TCL dehumidifier already paired to the built-in Matter integration
 - HACS installed
 
@@ -70,10 +71,7 @@ If you have a different TCL Matter dehumidifier, [open an issue][issue_tracker] 
 
 ## Server-side requirement
 
-This integration depends on the matter-server having a decoder registered for TCL's vendor clusters (`0x1334FC03`). Two paths get you there:
-
-1. **Wait for upstream.** [matter-js/matterjs-server PR #630](https://github.com/matter-js/matterjs-server/pull/630) ships the decoder. Once merged + released into the official `core_matter_server` add-on image, no extra work is needed.
-2. **Run the patched add-on now.** [github.com/iamadamreed/addons](https://github.com/iamadamreed/addons) ships a Matter Server add-on with the decoder pre-bundled. Add the repo to Home Assistant → Settings → Add-ons → 3-dot menu → Repositories, install, and point the built-in Matter integration at it.
+The matter-server must decode TCL's vendor cluster (`0x1334FC03`) and the Matter client in Home Assistant must know it. The client has had the decoder since `matter-python-client` 1.3.0, which every supported Home Assistant version ships. The server side is the TCL decoder from [matter-js/matterjs-server PR #630](https://github.com/matter-js/matterjs-server/pull/630). The official Matter Server app includes it from 1.5.5 (matter.js 0.18.0), which is what the verified unit runs. On an older server, the maintainer's patched app [github.com/iamadamreed/addons](https://github.com/iamadamreed/addons) bundles the decoder.
 
 ## Contributing
 

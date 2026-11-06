@@ -1,13 +1,13 @@
 """
 Live attribute I/O against the matter-server.
 
-The matter client keeps a local attribute cache in
-``MatterNode.node_data.attributes``. For vendor clusters it has no decoder for
-(such as TCL's 0x1334FC03) that cache is not refreshed, so the integration
-reads the device through the server instead. This module is the single place
-that touches the client's read, write and command calls, and it adds what the
-client does not: a timeout on every round trip and a check of the per-path
-status that a write returns.
+The matter client decodes TCL's cluster (0x1334FC03) from version 1.3.0 and
+keeps the values on the node object, which the coordinator reads for polling.
+A live read through the server is still used before a write, to see what the
+device holds now, and as a fallback for a client without the decoder. This
+module is the single place that touches the client's read, write and command
+calls, and it adds what the client does not: a timeout on every round trip and
+a check of the per-path status that a write returns.
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.tcl_matter.const import (
     ATTR_CURRENT_HUMIDITY,
@@ -215,18 +215,6 @@ async def test_async_set_mode_writes_int_for_known_mode(
     )
 
 
-async def test_async_set_mode_unknown_raises_validation_error(
-    primed_coordinator: TclMatterCoordinator,
-    mock_matter_client: MagicMock,
-) -> None:
-    """An unknown mode is a user error: raise, and write nothing."""
-    entity = _make_entity(primed_coordinator, mock_matter_client)
-    with pytest.raises(ServiceValidationError) as err:
-        await entity.async_set_mode("turbo")
-    assert err.value.translation_key == "unknown_mode"
-    mock_matter_client.write_attribute.assert_not_called()
-
-
 async def test_write_failure_raises_without_cache_update(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
@@ -303,9 +291,9 @@ def test_is_on_survives_a_failing_node_lookup(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """If the node cache lookup raises, fall back to the mode heuristic."""
+    """A node without the OnOff cluster falls back to the mode heuristic."""
     node = primed_coordinator.get_node(NODE_ID)
-    node.get_attribute_value = MagicMock(side_effect=RuntimeError("x"))
+    node.get_attribute_value = MagicMock(side_effect=KeyError(1))
     entity = _make_entity(primed_coordinator, mock_matter_client)
     assert entity.is_on is True  # mode attribute is a known value
 

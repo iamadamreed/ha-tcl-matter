@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
@@ -22,6 +22,8 @@ from custom_components.tcl_matter.const import (
     UNAVAILABLE_AFTER_FAILURES,
 )
 from custom_components.tcl_matter.coordinator import TclMatterCoordinator
+
+from .conftest import strip_decoded_values
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -92,11 +94,24 @@ def test_data_attribute_range_covers_defined_attributes() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_poll_reads_cluster_with_wildcard(
+async def test_poll_uses_the_decoded_values_without_a_round_trip(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """A poll issues one wildcard read per node and stores the device values."""
+    """The client's decoded cluster values are used and nothing is read remotely."""
+    node = primed_coordinator.get_node(NODE_ID)
+    node.node_data.attributes[_path(ATTR_TARGET_HUMIDITY)] = 61
+    await primed_coordinator.async_refresh()
+    mock_matter_client.read_attribute.assert_not_called()
+    assert primed_coordinator.data[NODE_ID][ATTR_TARGET_HUMIDITY] == 61
+
+
+async def test_poll_falls_back_to_a_wildcard_read_without_a_decoder(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+) -> None:
+    """A client with no decoder leaves nothing on the node, so the poll reads."""
+    strip_decoded_values(primed_coordinator.get_node(NODE_ID))
     await primed_coordinator.async_refresh()
     mock_matter_client.read_attribute.assert_awaited_once_with(
         node_id=NODE_ID, attribute_path=f"1/{TCL_CLUSTER_FC03}/*"
@@ -105,14 +120,15 @@ async def test_poll_reads_cluster_with_wildcard(
     assert primed_coordinator.data[NODE_ID][ATTR_TARGET_HUMIDITY] == 50
 
 
-async def test_poll_ignores_the_client_node_cache(
+async def test_node_without_endpoint_1_falls_back_to_a_read(
     primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
 ) -> None:
-    """Values come from the live read, not the (stale) node attribute cache."""
+    """A KeyError from the node lookup is treated as 'no decoded values'."""
     node = primed_coordinator.get_node(NODE_ID)
-    node.node_data.attributes[_path(ATTR_TARGET_HUMIDITY)] = 99
+    node.get_attribute_value = MagicMock(side_effect=KeyError(1))
     await primed_coordinator.async_refresh()
-    assert primed_coordinator.data[NODE_ID][ATTR_TARGET_HUMIDITY] == 50
+    mock_matter_client.read_attribute.assert_awaited_once()
 
 
 async def test_poll_all_nodes_failing_raises(
@@ -121,7 +137,9 @@ async def test_poll_all_nodes_failing_raises(
     mock_matter_client: MagicMock,
 ) -> None:
     """If no node can be read the update fails."""
-    coordinator = make_coordinator({NODE_ID: make_tcl_device(NODE_ID)})
+    device = make_tcl_device(NODE_ID)
+    strip_decoded_values(device.node)
+    coordinator = make_coordinator({NODE_ID: device})
     mock_matter_client.read_attribute = AsyncMock(side_effect=RuntimeError("down"))
     with pytest.raises(UpdateFailed):
         await coordinator._async_update_data()
@@ -133,7 +151,9 @@ async def test_poll_empty_response_counts_as_failure(
     mock_matter_client: MagicMock,
 ) -> None:
     """A response with no cluster attributes is treated as a failed read."""
-    coordinator = make_coordinator({NODE_ID: make_tcl_device(NODE_ID)})
+    device = make_tcl_device(NODE_ID)
+    strip_decoded_values(device.node)
+    coordinator = make_coordinator({NODE_ID: device})
     mock_matter_client.read_attribute = AsyncMock(return_value={"junk": 1})
     with pytest.raises(UpdateFailed):
         await coordinator._async_update_data()
@@ -146,12 +166,13 @@ async def test_one_failing_node_does_not_fail_the_others(
     mock_matter_client: MagicMock,
 ) -> None:
     """A node that can't be read leaves the other node's data intact."""
-    coordinator = make_coordinator(
-        {
-            NODE_ID: make_tcl_device(NODE_ID),
-            OTHER_NODE_ID: make_tcl_device(OTHER_NODE_ID),
-        }
-    )
+    devices = {
+        NODE_ID: make_tcl_device(NODE_ID),
+        OTHER_NODE_ID: make_tcl_device(OTHER_NODE_ID),
+    }
+    for device in devices.values():
+        strip_decoded_values(device.node)
+    coordinator = make_coordinator(devices)
 
     async def _read(*, node_id: int, attribute_path: str) -> dict[str, Any]:
         if node_id == OTHER_NODE_ID:
@@ -170,6 +191,7 @@ async def test_node_goes_unavailable_after_repeated_failures_and_recovers(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Failures mark the node unavailable (one warning), and success restores it."""
+    strip_decoded_values(primed_coordinator.get_node(NODE_ID))
     good = mock_matter_client.read_attribute
     mock_matter_client.read_attribute = AsyncMock(side_effect=RuntimeError("down"))
     with caplog.at_level(logging.INFO, logger="custom_components.tcl_matter"):
@@ -206,6 +228,7 @@ async def test_poll_in_flight_does_not_overwrite_a_newer_write(
     mock_matter_client: MagicMock,
 ) -> None:
     """A value written while a poll is reading is kept when the poll returns."""
+    strip_decoded_values(primed_coordinator.get_node(NODE_ID))
     release = asyncio.Event()
 
     async def _slow_read(*, node_id: int, attribute_path: str) -> dict[str, Any]:
@@ -231,6 +254,7 @@ async def test_poll_in_flight_does_not_overwrite_a_newer_push(
     mock_matter_client: MagicMock,
 ) -> None:
     """A pushed value that arrives during a poll is kept."""
+    strip_decoded_values(primed_coordinator.get_node(NODE_ID))
     release = asyncio.Event()
 
     async def _slow_read(*, node_id: int, attribute_path: str) -> dict[str, Any]:
@@ -262,13 +286,28 @@ async def test_handle_attribute_update_stores_value(
     assert primed_coordinator.data[NODE_ID][ATTR_TARGET_HUMIDITY] == 50
 
 
-async def test_handle_attribute_update_ignores_unknown_node(
+async def test_handle_attribute_update_skips_an_unchanged_value(
     primed_coordinator: TclMatterCoordinator,
 ) -> None:
-    """A push for a node we don't serve changes nothing."""
-    before = {k: dict(v) for k, v in primed_coordinator.data.items()}
-    primed_coordinator.handle_attribute_update(999, ATTR_MODE, "event", 3)
-    assert primed_coordinator.data == before
+    """A push that repeats the cached value does not notify listeners."""
+    calls: list[int] = []
+    primed_coordinator.async_add_listener(lambda: calls.append(1))
+    primed_coordinator.handle_attribute_update(NODE_ID, ATTR_MODE, "event", 0)
+    assert calls == []
+    primed_coordinator.handle_attribute_update(NODE_ID, ATTR_MODE, "event", 2)
+    assert calls == [1]
+
+
+async def test_stores_do_not_restart_the_poll_timer(
+    primed_coordinator: TclMatterCoordinator,
+) -> None:
+    """A push or write must not push the next poll back (it would starve it)."""
+    with patch.object(primed_coordinator, "_schedule_refresh") as schedule:
+        primed_coordinator.handle_attribute_update(NODE_ID, ATTR_MODE, "event", 3)
+        await primed_coordinator.async_write_attribute(
+            NODE_ID, ATTR_TARGET_HUMIDITY, 60
+        )
+    schedule.assert_not_called()
 
 
 async def test_handle_state_change_notifies_listeners(

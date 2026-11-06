@@ -12,7 +12,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 
-from .const import DOMAIN
+from .const import DOMAIN, MATTER_DOMAIN
 
 
 class TclMatterConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -24,5 +24,7 @@ class TclMatterConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> ConfigFlowResult:
-        """Create the single entry."""
+        """Create the single entry, once the matter integration is set up."""
+        if not self.hass.config_entries.async_entries(MATTER_DOMAIN):
+            return self.async_abort(reason="matter_not_loaded")
         return self.async_create_entry(title="TCL Matter", data={})

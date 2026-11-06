@@ -13,6 +13,7 @@ ignore = [
     "D212",   # multi-line-summary-first-line
     "COM812", # missing-trailing-comma
     "ISC001", # implicit-string-concatenation
+    "CPY001", # missing-copyright-notice: no per-file headers in this project
 
     # Defensive integration paths legitimately use typing.Any because the
     # matter-server / python-matter-server / HA matter-client APIs shift across

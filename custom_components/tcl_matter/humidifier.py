@@ -17,14 +17,12 @@ from homeassistant.components.humidifier import (
     HumidifierEntity,
     HumidifierEntityFeature,
 )
-from homeassistant.exceptions import ServiceValidationError
 
 from .const import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_MODE,
     ATTR_TARGET_HUMIDITY,
     AVAILABLE_MODES,
-    DOMAIN,
     MAX_HUMIDITY,
     MIN_HUMIDITY,
     MODE_NAME_MAP,
@@ -82,15 +80,15 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
         is a known value.
         """
         node = self.coordinator.get_node(self._node_id)
-        get_attr = getattr(node, "get_attribute_value", None)
-        if callable(get_attr):
-            try:
-                on_off = get_attr(ONOFF_ENDPOINT, ONOFF_CLUSTER, ONOFF_ATTR_ON_OFF)
-            # Defensive: matter client lookups raise inconsistent types.
-            except Exception:  # noqa: BLE001
-                on_off = None
-            if isinstance(on_off, bool):
-                return on_off
+        try:
+            on_off = node.get_attribute_value(
+                ONOFF_ENDPOINT, ONOFF_CLUSTER, ONOFF_ATTR_ON_OFF
+            )
+        # A node without endpoint 1 or the OnOff cluster raises KeyError.
+        except AttributeError, KeyError:
+            on_off = None
+        if isinstance(on_off, bool):
+            return on_off
         return self._node_data.get(ATTR_MODE) in MODE_VALUE_MAP
 
     async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002
@@ -131,12 +129,7 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
 
     async def async_set_mode(self, mode: str) -> None:
         """Write the operating mode attribute on the device."""
-        if mode not in MODE_NAME_MAP:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="unknown_mode",
-                translation_placeholders={"mode": mode},
-            )
+        # HA validates ``mode`` against available_modes before calling this.
         await self.coordinator.async_write_attribute(
             self._node_id, ATTR_MODE, MODE_NAME_MAP[mode]
         )

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 
-from .const import DOMAIN, MATTER_DOMAIN
+from .const import DOMAIN, LOGGER, MATTER_DOMAIN
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -76,7 +76,42 @@ def async_migrate_devices(
         device = registry.async_get_device_by_identifier(legacy, entry.entry_id)
         if device is None:
             continue
+        new = tcl_device_identifier(matter_client, node_id)
+        existing = registry.async_get_device_by_identifier(new, entry.entry_id)
+        if existing is not None and existing.id != device.id:
+            # Both exist, for example after rolling back to 0.5.x and upgrading
+            # again. Keep the older device, which has the user's area and name,
+            # and drop the newer one; its entities re-attach by unique id.
+            registry.async_remove_device(existing.id)
+        try:
+            registry.async_update_device(device.id, new_identifiers={new})
+        except dr.DeviceIdentifierCollisionError:
+            LOGGER.warning("Could not migrate device identifier for node %s", node_id)
+
+
+@callback
+def async_sync_device_info(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    matter_client: Any,
+    node: Any,
+) -> None:
+    """
+    Copy the node's current firmware and hardware versions to its device.
+
+    HA reads ``device_info`` only when an entity is added, so a firmware update
+    would otherwise never show. Called when the node reports a change.
+    """
+    basic = getattr(node, "device_info", None)
+    registry = dr.async_get(hass)
+    device = registry.async_get_device_by_identifier(
+        tcl_device_identifier(matter_client, node.node_id), entry.entry_id
+    )
+    if device is None or basic is None:
+        return
+    sw_version = getattr(basic, "softwareVersionString", None)
+    hw_version = getattr(basic, "hardwareVersionString", None)
+    if (device.sw_version, device.hw_version) != (sw_version, hw_version):
         registry.async_update_device(
-            device.id,
-            new_identifiers={tcl_device_identifier(matter_client, node_id)},
+            device.id, sw_version=sw_version, hw_version=hw_version
         )

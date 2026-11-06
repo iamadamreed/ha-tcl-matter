@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.tcl_matter.const import (
     ATTR_MODE,
@@ -78,17 +78,6 @@ async def test_async_select_option_updates_local_cache(
     select = TclModeSelect(primed_coordinator, NODE_ID)
     await select.async_select_option("dry")
     assert primed_coordinator.data[NODE_ID][ATTR_MODE] == 4
-
-
-async def test_async_select_option_unknown_raises_validation_error(
-    primed_coordinator: TclMatterCoordinator,
-    mock_matter_client: MagicMock,
-) -> None:
-    """An unknown option is a user error: raise, and write nothing."""
-    select = TclModeSelect(primed_coordinator, NODE_ID)
-    with pytest.raises(ServiceValidationError):
-        await select.async_select_option("turbo")
-    mock_matter_client.write_attribute.assert_not_called()
 
 
 async def test_select_dedup_skips_when_already_at_value(

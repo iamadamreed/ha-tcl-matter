@@ -90,8 +90,9 @@ class TclFilterAlertBinarySensor(TclMatterEntity, BinarySensorEntity):
     """
     Filter-clean alert (attr 4).
 
-    Verified on the H50D44W: this is the filter reminder, and writing
-    ``False`` to it clears the alert. See :class:`button.TclFilterResetButton`.
+    Verified on a T50DC9SPB (product ID 0x8002): this is the filter reminder,
+    and writing ``False`` to it clears the alert. See
+    :class:`button.TclFilterResetButton`.
     """
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM

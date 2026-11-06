@@ -9,13 +9,17 @@ cluster 0x1334FC03. Three paths feed it:
   attribute are bound into the callback when it is registered (see
   ``__init__``). Updates reach :meth:`handle_attribute_update`.
 * **Writes** - :meth:`async_write_attribute` stores the value it wrote.
-* **Poll** - every :data:`POLL_INTERVAL_SECONDS` seconds a wildcard read of the
-  cluster against the matter-server (not the client's cache) catches anything
-  push missed.
+* **Poll** - every :data:`POLL_INTERVAL_SECONDS` seconds the cluster is
+  re-read. The matter client decodes TCL's cluster (client 1.3.0 and newer)
+  and keeps the decoded values on the node object, so the poll reads them
+  from there at no cost. A client without the decoder leaves them empty, and
+  the poll then falls back to a wildcard read against the matter-server.
 
 Every store bumps a per-attribute sequence number. A poll remembers the
 numbers it started with and drops any value that was written or pushed while
-the read was in flight, so a slow poll cannot put an old value back.
+the read was in flight, so a slow poll cannot put an old value back. Stores
+do not restart the poll timer, so a busy node cannot starve the poll for the
+others.
 """
 
 from __future__ import annotations
@@ -124,8 +128,31 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
                     current[attr_id] = value
         return data
 
+    def _decoded_values(self, node_id: int) -> dict[int, Any]:
+        """
+        Return the cluster values the matter client holds for this node.
+
+        Empty if the client has no decoder for the cluster or the node has no
+        endpoint 1.
+        """
+        node = self.get_node(node_id)
+        values: dict[int, Any] = {}
+        for attr_id in range(NUM_TCL_FC03_DATA_ATTRS):
+            try:
+                value = node.get_attribute_value(1, TCL_CLUSTER_FC03, attr_id)
+            # Defensive: a node without endpoint 1 or without the cluster
+            # raises KeyError or AttributeError depending on client version.
+            except AttributeError, KeyError, TypeError:
+                return {}
+            if value is not None:
+                values[attr_id] = value
+        return values
+
     async def _poll_node(self, node_id: int) -> dict[int, Any] | None:
         """Read one node. Returns None on failure and tracks availability."""
+        if decoded := self._decoded_values(node_id):
+            self._record_success(node_id)
+            return decoded
         try:
             result = await live_read_attribute(
                 self._matter_client, node_id, f"1/{TCL_CLUSTER_FC03}/*"
@@ -200,7 +227,7 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         Registered per (node, attribute) with those two arguments bound,
         because the matter client passes only ``(event, value)``.
         """
-        if node_id not in self._devices:
+        if (self.data or {}).get(node_id, {}).get(attr_id) == value:
             return
         self._store(node_id, attr_id, value)
 
@@ -295,9 +322,16 @@ class TclMatterCoordinator(DataUpdateCoordinator[dict[int, dict[int, Any]]]):
         self.async_update_listeners()
 
     def _store(self, node_id: int, attr_id: int, value: Any) -> None:
-        """Record a value and publish it to listeners."""
+        """
+        Record a value and publish it to listeners.
+
+        Deliberately not ``async_set_updated_data``: that restarts the poll
+        timer, so frequent pushes from one node would keep the poll from ever
+        running for the others.
+        """
         key = (node_id, attr_id)
         self._write_seq[key] = self._write_seq.get(key, 0) + 1
         new_snapshot = dict(self.data or {})
         new_snapshot[node_id] = {**new_snapshot.get(node_id, {}), attr_id: value}
-        self.async_set_updated_data(new_snapshot)
+        self.data = new_snapshot
+        self.async_update_listeners()

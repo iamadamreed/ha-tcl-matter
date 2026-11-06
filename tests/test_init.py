@@ -30,7 +30,7 @@ from custom_components.tcl_matter.device import (
     tcl_device_identifier,
 )
 
-from .conftest import FABRIC_ID
+from .conftest import FABRIC_ID, strip_decoded_values
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -144,8 +144,10 @@ async def test_setup_retries_when_nothing_can_be_read(
     mock_tcl_entry: MockConfigEntry,
     setup_matter_dependency: MockConfigEntry,
     mock_matter_client: MagicMock,
+    mock_matter_node: MagicMock,
 ) -> None:
     """If the first read fails the entry goes to setup-retry."""
+    strip_decoded_values(mock_matter_node)
     mock_matter_client.read_attribute = AsyncMock(side_effect=RuntimeError("down"))
     await _setup(hass, mock_tcl_entry)
     assert mock_tcl_entry.state is ConfigEntryState.SETUP_RETRY
@@ -187,7 +189,8 @@ async def test_subscribes_per_attribute_with_node_and_path_filters(
         for s in mock_matter_client.subscriptions
         if s.event_filter is EventType.ATTRIBUTE_UPDATED and s.node_filter == NODE_ID
     }
-    expected = {f"1/{TCL_CLUSTER_FC03}/{a}" for a in range(NUM_TCL_FC03_DATA_ATTRS)}
+    # Attribute 6 (feature set) is polled but nothing displays it.
+    expected = {f"1/{TCL_CLUSTER_FC03}/{a}" for a in range(NUM_TCL_FC03_DATA_ATTRS - 1)}
     assert expected <= attr_subs
     assert "1/6/0" in attr_subs  # OnOff
     events = {s.event_filter for s in mock_matter_client.subscriptions}
@@ -393,3 +396,41 @@ def test_node_vendor_id_unreadable_is_none(vendor: object) -> None:
     node.device_info.vendorID = vendor
     assert _node_vendor_id(node) is None
     assert _node_vendor_id(object()) is None
+
+
+def test_node_vendor_id_survives_a_node_with_no_endpoint_0() -> None:
+    """A node whose interview failed raises KeyError from device_info."""
+    node = MagicMock()
+    type(node).device_info = property(lambda _self: (_ for _ in ()).throw(KeyError(0)))
+    assert _node_vendor_id(node) is None
+
+
+async def test_remove_device_is_allowed_while_the_entry_is_not_loaded(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+) -> None:
+    """With no runtime data (entry not loaded) nothing is served, so remove."""
+    registry = dr.async_get(hass)
+    device = registry.async_get_or_create(
+        config_entry_id=mock_tcl_entry.entry_id, identifiers={(DOMAIN, "x")}
+    )
+    assert await async_remove_config_entry_device(hass, mock_tcl_entry, device) is True
+
+
+async def test_setup_retries_if_matter_reloaded_during_setup(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    setup_matter_dependency: MockConfigEntry,
+) -> None:
+    """A matter entry that is no longer loaded after setup read means a dead client."""
+
+    async def _first_refresh() -> None:
+        setup_matter_dependency.mock_state(hass, ConfigEntryState.NOT_LOADED)
+
+    with patch(
+        "custom_components.tcl_matter.coordinator.TclMatterCoordinator"
+        ".async_config_entry_first_refresh",
+        new=AsyncMock(side_effect=_first_refresh),
+    ):
+        await _setup(hass, mock_tcl_entry)
+    assert mock_tcl_entry.state is ConfigEntryState.SETUP_RETRY

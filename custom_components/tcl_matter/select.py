@@ -10,9 +10,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.exceptions import ServiceValidationError
 
-from .const import ATTR_MODE, AVAILABLE_MODES, DOMAIN, MODE_NAME_MAP
+from .const import ATTR_MODE, AVAILABLE_MODES, MODE_NAME_MAP
 from .entity import TclMatterEntity
 from .helpers import mode_name
 
@@ -53,12 +52,7 @@ class TclModeSelect(TclMatterEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Write the selected mode back to the device."""
-        if option not in MODE_NAME_MAP:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="unknown_mode",
-                translation_placeholders={"mode": option},
-            )
+        # HA validates ``option`` against ``options`` before calling this.
         await self.coordinator.async_write_attribute(
             self._node_id, ATTR_MODE, MODE_NAME_MAP[option]
         )

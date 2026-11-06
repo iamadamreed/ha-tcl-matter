@@ -86,6 +86,18 @@ def _make_device_info(
     )
 
 
+def strip_decoded_values(node: Any) -> None:
+    """Make a fake node look like a client that has no decoder for the cluster.
+
+    ``get_attribute_value`` then returns None for every vendor attribute, so
+    the coordinator has to fall back to a live read.
+    """
+    prefix = f"1/{TCL_CLUSTER_FC03}/"
+    node.node_data.attributes = {
+        k: v for k, v in node.node_data.attributes.items() if not k.startswith(prefix)
+    }
+
+
 def _make_node_data(attributes: dict[str, Any]) -> SimpleNamespace:
     """Build a ``node_data`` namespace whose ``.attributes`` is a path-keyed dict."""
     return SimpleNamespace(attributes=dict(attributes))
