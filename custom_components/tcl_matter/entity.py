@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -76,16 +77,28 @@ class TclMatterEntity(CoordinatorEntity["TclMatterCoordinator"]):
         info = _node_basic_info(coordinator, node_id)
         # HA keeps one device per integration, so sharing the matter
         # integration's identifier would not merge devices. Keep our own device
-        # and link it to the matter one with via_device.
-        self._attr_device_info = DeviceInfo(
+        # and link it to the matter one (see device_info).
+        self._device_info_base = DeviceInfo(
             identifiers={(MATTER_DOMAIN, str(node_id))},
             name=info.get("product_name") or "TCL Dehumidifier",
             manufacturer=info.get("vendor_name") or "TCL",
             model=info.get("product_name") or "TCL Dehumidifier",
             hw_version=info.get("hw_version"),
             sw_version=info.get("sw_version"),
-            via_device=_matter_device_identifier(coordinator.matter_client, node_id),
         )
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info, linked to the matter integration's device."""
+        info = DeviceInfo(**self._device_info_base)
+        identifier = _matter_device_identifier(
+            self.coordinator.matter_client, self._node_id
+        )
+        if identifier is not None and self.hass is not None:
+            parent = dr.async_get(self.hass).async_get_device(identifiers={identifier})
+            if parent is not None:
+                info["via_device_id"] = parent.id
+        return info
 
     @property
     def _node_data(self) -> dict[int, Any]:

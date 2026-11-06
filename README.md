@@ -18,7 +18,7 @@ The dehumidifier-specific data **is** present on the device — just inside TCL'
 - 🪣 `binary_sensor.tcl_dehumidifier_water_bucket_full` — alerts when bucket fills (reads error code 5 on H50D44W; falls back to the dedicated bool for any firmware that ever wires it up)
 - 🧼 `binary_sensor.tcl_dehumidifier_filter` — filter-clean alert (attribute 4 of the vendor cluster)
 - 🔄 `button.tcl_dehumidifier_reset_filter` — clears the filter alert by writing `False` to that attribute. The H50D44W has no Matter command for it; the unit beeps when the alert clears (verified on hardware)
-- 🔗 The device is linked to the built-in Matter device (shown as connected via it). HA 2026 keeps one device per integration, so the two cannot be merged into one card
+- 🔗 The device is linked to the built-in Matter device (shown as connected via it; needs HA 2026.8+). HA 2026 keeps one device per integration, so the two cannot be merged into one card
 - ⏻ The dehumidifier entity follows the real power state (Matter OnOff cluster) and can be turned on and off
 - ⚠️ `sensor.tcl_dehumidifier_error_codes` — diagnostic; known codes: **5 = water bucket full**
 - 🎛️ `select.tcl_dehumidifier_mode` — direct mode control (Set / Continue / Comfort / Smart / Dry)

@@ -19,6 +19,8 @@ from custom_components.tcl_matter.humidifier import TclDehumidifier
 from custom_components.tcl_matter.sensor import TclCurrentHumiditySensor
 
 if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
     from custom_components.tcl_matter.coordinator import TclMatterCoordinator
 
 NODE_ID = 5
@@ -92,18 +94,28 @@ def test_device_identifier_none_without_fabric_id() -> None:
 
 
 def test_entity_links_to_matter_device_via_device(
+    hass: HomeAssistant,
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """With a fabric id the device is a child of the matter integration's device."""
+    """The device is a child of the matter integration's device when it exists."""
+    from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
     mock_matter_client.server_info.compressed_fabric_id = 0xABC
+    matter_entry = MockConfigEntry(domain="matter")
+    matter_entry.add_to_hass(hass)
+    parent = dr.async_get(hass).async_get_or_create(
+        config_entry_id=matter_entry.entry_id,
+        identifiers={
+            ("matter", f"deviceid_{0xABC:016X}-{NODE_ID:016X}-MatterNodeDevice")
+        },
+    )
     entity = TclCurrentHumiditySensor(primed_coordinator, NODE_ID)
+    entity.hass = hass
     info = entity.device_info
     assert info["identifiers"] == {("matter", str(NODE_ID))}
-    assert info["via_device"] == (
-        "matter",
-        f"deviceid_{0xABC:016X}-{NODE_ID:016X}-MatterNodeDevice",
-    )
+    assert info["via_device_id"] == parent.id
     assert info["name"]
 
 
@@ -112,7 +124,7 @@ def test_entity_has_no_parent_link_without_fabric_id(
 ) -> None:
     """Without a usable fabric id the device stands alone."""
     entity = TclCurrentHumiditySensor(primed_coordinator, NODE_ID)
-    assert entity.device_info["via_device"] is None
+    assert "via_device_id" not in entity.device_info
 
 
 def test_entity_unavailable_when_node_unreachable(
