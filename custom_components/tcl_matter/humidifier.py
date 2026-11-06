@@ -20,7 +20,6 @@ Two safety measures live in this module to prevent runaway write loops:
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.humidifier import (
@@ -28,6 +27,7 @@ from homeassistant.components.humidifier import (
     HumidifierEntity,
     HumidifierEntityFeature,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     ATTR_CURRENT_HUMIDITY,
@@ -39,10 +39,11 @@ from .const import (
     MIN_HUMIDITY,
     MODE_NAME_MAP,
     MODE_VALUE_MAP,
-    TCL_CLUSTER_FC03,
+    ONOFF_ATTR_ON_OFF,
+    ONOFF_CLUSTER,
+    ONOFF_ENDPOINT,
 )
 from .entity import TclMatterEntity
-from .matter_ws import live_write_attribute
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -85,24 +86,51 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
         """Initialize the dehumidifier entity."""
         super().__init__(coordinator, node_id, "dehumidifier")
         self._matter_client = matter_client
-        # One lock per attribute id; created lazily so we don't carry empty
-        # lock objects for attrs we never write.
-        self._write_locks: dict[int, asyncio.Lock] = {}
 
     @property
     def is_on(self) -> bool:
         """
-        Return True if the unit appears to be running.
+        Return True if the unit is powered on.
 
-        TCL exposes power as a separate OnOff cluster on the same node.
-        Until we wire that in, we treat the device as on whenever its
-        mode attribute reports a known value.
-
-        TODO(empirical): bind to the OnOff cluster (0x0006) on endpoint 1
-        once the matter client lets us read it cheaply.
+        Power is the standard OnOff cluster (0x0006) on endpoint 1, which the
+        matter integration keeps current. If it can't be read, fall back to
+        treating the unit as on while its mode attribute is a known value.
         """
-        mode_value = self._node_data.get(ATTR_MODE)
-        return mode_value in MODE_VALUE_MAP
+        node = self.coordinator.get_node(self._node_id)
+        get_attr = getattr(node, "get_attribute_value", None)
+        if callable(get_attr):
+            try:
+                on_off = get_attr(ONOFF_ENDPOINT, ONOFF_CLUSTER, ONOFF_ATTR_ON_OFF)
+            # Defensive: matter-server APIs raise inconsistent types.
+            except Exception:  # noqa: BLE001
+                on_off = None
+            if isinstance(on_off, bool):
+                return on_off
+        return self._node_data.get(ATTR_MODE) in MODE_VALUE_MAP
+
+    async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Turn the unit on."""
+        await self._send_on_off("On")
+
+    async def async_turn_off(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Turn the unit off."""
+        await self._send_on_off("Off")
+
+    async def _send_on_off(self, command_name: str) -> None:
+        """Send an OnOff cluster command through the matter server."""
+        try:
+            await self._matter_client.send_command(
+                "device_command",
+                node_id=self._node_id,
+                endpoint_id=ONOFF_ENDPOINT,
+                cluster_id=ONOFF_CLUSTER,
+                command_name=command_name,
+                payload={},
+            )
+        # Defensive: the matter-server raises an open-ended set of types.
+        except Exception as err:
+            msg = f"{command_name} failed for node {self._node_id}: {err}"
+            raise HomeAssistantError(msg) from err
 
     @property
     def target_humidity(self) -> int | None:
@@ -145,54 +173,6 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
             return
         await self._write_attr(ATTR_MODE, MODE_NAME_MAP[mode])
 
-    def _lock_for(self, attr_id: int) -> asyncio.Lock:
-        """Return (lazily-created) write lock for ``attr_id``."""
-        lock = self._write_locks.get(attr_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._write_locks[attr_id] = lock
-        return lock
-
     async def _write_attr(self, attr_id: int, value: Any) -> None:
-        """
-        Write a TCL vendor cluster attribute on the device.
-
-        Acquires the per-attribute lock, dedupes against the cached value,
-        then issues a live write through the matter-server WebSocket. On
-        success, the local cache is optimistically updated so the UI
-        reflects the change without waiting for the next poll/push.
-        """
-        path = f"1/{TCL_CLUSTER_FC03}/{attr_id}"
-        async with self._lock_for(attr_id):
-            current = self._node_data.get(attr_id)
-            if current == value:
-                LOGGER.debug(
-                    "write dedup: node=%s attr=%s already %r — skipping",
-                    self._node_id,
-                    attr_id,
-                    value,
-                )
-                return
-
-            try:
-                await live_write_attribute(
-                    self._matter_client, self._node_id, path, value
-                )
-            # Defensive: the matter-server raises an open-ended set of
-            # exception types for transport, validation, and device-side
-            # errors. Logging here is the right place; callers shouldn't
-            # have to wrap every set_humidity/set_mode call in try/except.
-            except Exception as err:  # noqa: BLE001
-                LOGGER.error(
-                    "live write failed: node=%s path=%s value=%r err=%s",
-                    self._node_id,
-                    path,
-                    value,
-                    err,
-                )
-                return
-
-            self.coordinator._devices[self._node_id].attributes[attr_id] = value  # noqa: SLF001
-            snapshot = dict(self.coordinator.data or {})
-            snapshot.setdefault(self._node_id, {})[attr_id] = value
-            self.coordinator.async_set_updated_data(snapshot)
+        """Write a vendor attribute through the coordinator."""
+        await self.coordinator.async_write_attribute(self._node_id, attr_id, value)

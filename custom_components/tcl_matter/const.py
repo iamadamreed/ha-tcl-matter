@@ -30,7 +30,11 @@ ATTR_BUCKET_FULL: Final = 3  # bool — dedicated water-bucket flag.
 # DEAD on H50D44W: empirically verified 2026-05-11 to stay False even when the
 # bucket is full. Kept as a defensive read in case TCL wires it up on a future
 # model or firmware. Real bucket-full signal is code 5 in ATTR_ERROR_CODES.
-ATTR_LOCK_OR_FILTER: Final = 4  # bool — child lock or filter alert (TBD)
+# bool — filter-clean alert. Verified on the H50D44W: writing False clears the
+# alert and the unit beeps. The cluster has no command for it, so a reset is
+# this write.
+ATTR_FILTER_ALERT: Final = 4
+ATTR_LOCK_OR_FILTER: Final = ATTR_FILTER_ALERT  # deprecated alias
 ATTR_ERROR_CODES: Final = 5  # string — JSON-encoded list, e.g. "[]" or "[5]"
 ATTR_FEATURE_SET: Final = 6  # string — JSON-encoded list, e.g. "[3]"
 
@@ -62,6 +66,11 @@ MODE_NAME_MAP: Final[dict[str, int]] = {v: k for k, v in MODE_VALUE_MAP.items()}
 
 AVAILABLE_MODES: Final[list[str]] = list(MODE_VALUE_MAP.values())
 
+# Standard OnOff cluster, which carries the unit's power state.
+ONOFF_ENDPOINT: Final = 1
+ONOFF_CLUSTER: Final = 0x0006
+ONOFF_ATTR_ON_OFF: Final = 0
+
 # Humidity bounds (typical range for residential dehumidifiers; verify on device)
 MIN_HUMIDITY: Final = 35
 MAX_HUMIDITY: Final = 85
@@ -83,3 +92,6 @@ NUM_TCL_FC03_DATA_ATTRS: Final = 7
 # Path-string format used by the matter-server to identify attribute tuples.
 # "endpoint/cluster/attr" — three integer fields separated by slashes.
 ATTR_PATH_PARTS: Final = 3
+
+# ATTRIBUTE_UPDATED push events carry a (node_id, path, value) tuple.
+ATTR_EVENT_TUPLE_LEN: Final = 3

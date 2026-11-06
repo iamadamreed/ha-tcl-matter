@@ -37,6 +37,26 @@ def _node_basic_info(coordinator: TclMatterCoordinator, node_id: int) -> dict[st
     }
 
 
+def _matter_device_identifier(
+    matter_client: Any, node_id: int
+) -> tuple[str, str] | None:
+    """
+    Return the identifier the matter integration uses for this node's device.
+
+    It is ``deviceid_<compressed fabric id>-<node id>-MatterNodeDevice``, with
+    both ids as 16 hex digits. Returns ``None`` when the fabric id is not
+    available, and the caller falls back to a standalone device.
+    """
+    server_info = getattr(matter_client, "server_info", None)
+    fabric_id = getattr(server_info, "compressed_fabric_id", None)
+    if not isinstance(fabric_id, int):
+        return None
+    return (
+        MATTER_DOMAIN,
+        f"deviceid_{fabric_id:016X}-{node_id:016X}-MatterNodeDevice",
+    )
+
+
 class TclMatterEntity(CoordinatorEntity["TclMatterCoordinator"]):
     """Base class for all TCL Matter entities."""
 
@@ -53,16 +73,22 @@ class TclMatterEntity(CoordinatorEntity["TclMatterCoordinator"]):
         self._node_id = node_id
         self._attr_unique_id = f"{DOMAIN}_{node_id}_{unique_id_suffix}"
 
-        info = _node_basic_info(coordinator, node_id)
-        self._attr_device_info = DeviceInfo(
-            # Reuse the matter integration's identifier so HA merges devices.
-            identifiers={(MATTER_DOMAIN, str(node_id))},
-            name=info.get("product_name") or "TCL Dehumidifier",
-            manufacturer=info.get("vendor_name") or "TCL",
-            model=info.get("product_name") or "TCL Dehumidifier",
-            hw_version=info.get("hw_version"),
-            sw_version=info.get("sw_version"),
-        )
+        identifier = _matter_device_identifier(coordinator.matter_client, node_id)
+        if identifier is not None:
+            # Same identifier the matter integration registers, so HA attaches
+            # these entities to the existing device. The matter integration
+            # owns the device's name, model and versions.
+            self._attr_device_info = DeviceInfo(identifiers={identifier})
+        else:
+            info = _node_basic_info(coordinator, node_id)
+            self._attr_device_info = DeviceInfo(
+                identifiers={(MATTER_DOMAIN, str(node_id))},
+                name=info.get("product_name") or "TCL Dehumidifier",
+                manufacturer=info.get("vendor_name") or "TCL",
+                model=info.get("product_name") or "TCL Dehumidifier",
+                hw_version=info.get("hw_version"),
+                sw_version=info.get("sw_version"),
+            )
 
     @property
     def _node_data(self) -> dict[int, Any]:
@@ -74,4 +100,8 @@ class TclMatterEntity(CoordinatorEntity["TclMatterCoordinator"]):
     @property
     def available(self) -> bool:
         """Return True if the coordinator has data for this node."""
-        return super().available and bool(self._node_data)
+        return (
+            super().available
+            and bool(self._node_data)
+            and self.coordinator.node_available(self._node_id)
+        )

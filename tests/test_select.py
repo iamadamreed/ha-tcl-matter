@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.tcl_matter.const import (
     ATTR_MODE,
@@ -104,18 +105,16 @@ async def test_select_dedup_skips_when_already_at_value(
     mock_matter_client.write_attribute.assert_not_called()
 
 
-async def test_select_logs_error_on_write_failure(
+async def test_select_raises_on_write_failure(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A failing write logs at error and leaves the cache untouched."""
+    """A failing write raises to the caller and leaves the cache untouched."""
     mock_matter_client.write_attribute = AsyncMock(side_effect=RuntimeError("boom"))
     select = TclModeSelect(primed_coordinator, mock_matter_client, NODE_ID)
     before = primed_coordinator.data[NODE_ID][ATTR_MODE]
 
-    with caplog.at_level(logging.ERROR, logger="custom_components.tcl_matter"):
+    with pytest.raises(HomeAssistantError):
         await select.async_select_option("comfort")
 
     assert primed_coordinator.data[NODE_ID][ATTR_MODE] == before
-    assert any("live mode write failed" in rec.message for rec in caplog.records)

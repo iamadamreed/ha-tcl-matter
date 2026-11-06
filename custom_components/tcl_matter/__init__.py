@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.HUMIDIFIER,
     Platform.SELECT,
     Platform.SENSOR,

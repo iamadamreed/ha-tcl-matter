@@ -8,15 +8,12 @@ Exposes the two boolean status flags on cluster 0x1334FC03:
   2026-05-11), so the canonical signal is error code 5 in ATTR_ERROR_CODES
   (attr 5). We OR both sources so any future firmware that wires up attr 3
   is also caught.
-* :class:`TclFilterAlertBinarySensor` (attr 4) — semantics still TBD;
-  TCL's app shows it as either a child-lock indicator or a filter-clean
-  reminder depending on the SKU.
+* :class:`TclFilterAlertBinarySensor` (attr 4) — the filter-clean alert.
 """
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -27,11 +24,11 @@ from homeassistant.const import EntityCategory
 from .const import (
     ATTR_BUCKET_FULL,
     ATTR_ERROR_CODES,
-    ATTR_LOCK_OR_FILTER,
+    ATTR_FILTER_ALERT,
     ERROR_CODE_BUCKET_FULL,
-    LOGGER,
 )
 from .entity import TclMatterEntity
+from .helpers import coerce_bool, parse_json_list
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -55,44 +52,9 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-def _coerce_bool(value: object) -> bool | None:
-    """Best-effort coercion of an attribute payload into a bool."""
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes"}:
-            return True
-        if lowered in {"false", "0", "no", ""}:
-            return False
-    return None
-
-
-def _parse_error_codes(value: object) -> list[Any] | None:
-    """
-    Decode TCL's JSON-encoded error_codes payload to a list.
-
-    Returns ``None`` if the value is missing or cannot be parsed; ``[]`` if
-    the device reports no active errors. Mirrors the logic in :mod:`sensor`.
-    """
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return value
-    if not isinstance(value, str):
-        return None
-    if not value.strip():
-        return []
-    try:
-        decoded = json.loads(value)
-    except json.JSONDecodeError:
-        LOGGER.debug("Could not parse TCL error_codes payload: %r", value)
-        return None
-    return decoded if isinstance(decoded, list) else [decoded]
+# Backwards-compatible private names (tests and callers import these).
+_coerce_bool = coerce_bool
+_parse_error_codes = parse_json_list
 
 
 class TclBucketFullBinarySensor(TclMatterEntity, BinarySensorEntity):
@@ -131,12 +93,10 @@ class TclBucketFullBinarySensor(TclMatterEntity, BinarySensorEntity):
 
 class TclFilterAlertBinarySensor(TclMatterEntity, BinarySensorEntity):
     """
-    Filter / lock alert (attr 4).
+    Filter-clean alert (attr 4).
 
-    TODO(empirical): confirm whether this attribute reports a filter
-    clean reminder, a child lock state, or both. Toggle the lock and
-    run the device long enough to trigger the filter reminder, then
-    correlate.
+    Verified on the H50D44W: this is the filter reminder, and writing
+    ``False`` to it clears the alert. See :class:`button.TclFilterResetButton`.
     """
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -149,5 +109,5 @@ class TclFilterAlertBinarySensor(TclMatterEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return True when the filter / lock alert is set."""
-        return _coerce_bool(self._node_data.get(ATTR_LOCK_OR_FILTER))
+        """Return True when the filter alert is set."""
+        return _coerce_bool(self._node_data.get(ATTR_FILTER_ALERT))

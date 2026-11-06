@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.tcl_matter.const import (
     ATTR_CURRENT_HUMIDITY,
@@ -229,22 +230,20 @@ async def test_async_set_mode_unknown_logs_warning(
     assert any("Unknown TCL mode" in rec.message for rec in caplog.records)
 
 
-async def test_write_failure_logs_and_returns_without_cache_update(
+async def test_write_failure_raises_without_cache_update(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A failing live write logs at error and leaves the cache untouched."""
+    """A failing live write raises to the caller and leaves the cache untouched."""
     mock_matter_client.write_attribute = AsyncMock(side_effect=RuntimeError("nope"))
     entity = _make_entity(primed_coordinator, mock_matter_client)
     before = primed_coordinator.data[NODE_ID][ATTR_TARGET_HUMIDITY]
 
-    with caplog.at_level(logging.ERROR, logger="custom_components.tcl_matter"):
+    with pytest.raises(HomeAssistantError):
         await entity.async_set_humidity(60)
 
     # Cache must NOT optimistically advance when the device write failed.
     assert primed_coordinator.data[NODE_ID][ATTR_TARGET_HUMIDITY] == before
-    assert any("live write failed" in rec.message for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -307,8 +306,8 @@ async def test_per_attribute_lock_serialises_concurrent_writes(
     mock_matter_client.write_attribute = AsyncMock(side_effect=_slow_write)
     entity = _make_entity(primed_coordinator, mock_matter_client)
 
-    # Three concurrent writes to attr 1: the first writes 60, the lock
-    # serialises the next two, both of which find cache=60 and dedupe.
+    # Three concurrent writes to attr 1. The lock serialises them. The mock's
+    # live read is static, so none of them dedupes against the device.
     await asyncio.gather(
         entity.async_set_humidity(60),
         entity.async_set_humidity(60),
@@ -316,7 +315,7 @@ async def test_per_attribute_lock_serialises_concurrent_writes(
     )
 
     assert max_inflight == 1  # never overlapped
-    assert mock_matter_client.write_attribute.await_count == 1  # other two deduped
+    assert mock_matter_client.write_attribute.await_count == 3
 
 
 async def test_per_attribute_lock_independent_across_attrs(

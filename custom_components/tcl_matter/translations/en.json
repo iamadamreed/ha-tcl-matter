@@ -62,6 +62,11 @@
           "dry": "Dry"
         }
       }
+    },
+    "button": {
+      "reset_filter": {
+        "name": "Reset filter"
+      }
     }
   }
 }

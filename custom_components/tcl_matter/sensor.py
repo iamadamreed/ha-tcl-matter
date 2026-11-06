@@ -9,7 +9,6 @@ Surfaces the diagnostic side of the vendor cluster:
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import (
@@ -22,9 +21,9 @@ from homeassistant.const import PERCENTAGE, EntityCategory
 from .const import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_ERROR_CODES,
-    LOGGER,
 )
 from .entity import TclMatterEntity
+from .helpers import parse_json_list
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -103,18 +102,4 @@ class TclErrorCodeSensor(TclMatterEntity, SensorEntity):
 
     def _parse_codes(self) -> list[Any] | None:
         """Decode the JSON-encoded error code list."""
-        raw = self._node_data.get(ATTR_ERROR_CODES)
-        if raw is None:
-            return None
-        if isinstance(raw, list):
-            return raw
-        if not isinstance(raw, str):
-            return None
-        if not raw.strip():
-            return []
-        try:
-            decoded = json.loads(raw)
-        except json.JSONDecodeError:
-            LOGGER.debug("Could not parse TCL error_codes payload: %r", raw)
-            return None
-        return decoded if isinstance(decoded, list) else [decoded]
+        return parse_json_list(self._node_data.get(ATTR_ERROR_CODES))
