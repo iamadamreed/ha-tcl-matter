@@ -31,8 +31,8 @@ ATTR_BUCKET_FULL: Final = 3  # bool — dedicated water-bucket flag.
 # bucket is full. Kept as a defensive read in case TCL wires it up on a future
 # model or firmware. Real bucket-full signal is code 5 in ATTR_ERROR_CODES.
 # bool — filter-clean alert. Verified on the H50D44W: writing False clears the
-# alert and the unit beeps. The cluster has no command for it, so a reset is
-# this write.
+# alert and the unit beeps (it also beeps when True is written). The cluster has
+# no command for it, so a reset is this write.
 ATTR_FILTER_ALERT: Final = 4
 ATTR_LOCK_OR_FILTER: Final = ATTR_FILTER_ALERT  # deprecated alias
 ATTR_ERROR_CODES: Final = 5  # string — JSON-encoded list, e.g. "[]" or "[5]"
