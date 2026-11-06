@@ -55,6 +55,7 @@ This integration **requires the device to already be paired via the built-in Mat
 | Model | Vendor ID | Product ID | Status |
 |---|---|---|---|
 | TCL H50D44W | `0x1334` | `0x8002` | ✅ Verified |
+| TCL T50DC9SPB (50 pint, with pump) | `0x1334` | `0x8002` | ✅ Verified (firmware 1.0, hardware 1; mode, humidity, filter alert and reset button) |
 | TCL H50D66KW | `0x1334` | `0x8002` | Likely (same family — please report) |
 
 If you have a different TCL Matter dehumidifier, [open an issue][issue_tracker] with the model + vendor/product IDs.
