@@ -32,6 +32,8 @@ from .coordinator import TclMatterCoordinator
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from homeassistant.helpers.device_registry import DeviceEntry
+
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
@@ -305,6 +307,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,  # noqa: ARG001
+    entry: TclMatterConfigEntry,
+    device_entry: DeviceEntry,
+) -> bool:
+    """Allow removing a device unless it belongs to a node we currently serve."""
+    active = {str(node_id) for node_id in entry.runtime_data.devices}
+    return not any(
+        domain == MATTER_DOMAIN and ident in active
+        for domain, ident in device_entry.identifiers
+    )
+
+
 async def async_reload_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -> None:
     """Reload the TCL Matter config entry."""
     await hass.config_entries.async_reload(entry.entry_id)
@@ -316,6 +331,7 @@ __all__ = [
     "TclMatterConfigEntry",
     "TclMatterRuntimeData",
     "async_reload_entry",
+    "async_remove_config_entry_device",
     "async_setup_entry",
     "async_unload_entry",
 ]

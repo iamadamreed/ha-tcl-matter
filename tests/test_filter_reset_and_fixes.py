@@ -197,3 +197,16 @@ def test_push_event_ignores_other_clusters(
     before = dict(primed_coordinator.data[NODE_ID])
     primed_coordinator.handle_push_event("x", (NODE_ID, "1/6/0", True))
     assert primed_coordinator.data[NODE_ID] == before
+
+
+async def test_remove_device_allowed_only_when_not_active() -> None:
+    """A device for a node we serve can't be removed; a stray one can."""
+    from types import SimpleNamespace
+
+    from custom_components.tcl_matter import async_remove_config_entry_device
+
+    entry = SimpleNamespace(runtime_data=SimpleNamespace(devices={NODE_ID: object()}))
+    active = SimpleNamespace(identifiers={("matter", str(NODE_ID))})
+    stray = SimpleNamespace(identifiers={("matter", "deviceid_X-MatterNodeDevice")})
+    assert await async_remove_config_entry_device(None, entry, active) is False
+    assert await async_remove_config_entry_device(None, entry, stray) is True

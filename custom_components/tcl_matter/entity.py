@@ -95,9 +95,14 @@ class TclMatterEntity(CoordinatorEntity["TclMatterCoordinator"]):
             self.coordinator.matter_client, self._node_id
         )
         if identifier is not None and self.hass is not None:
-            parent = dr.async_get(self.hass).async_get_device(identifiers={identifier})
-            if parent is not None:
-                info["via_device_id"] = parent.id
+            registry = dr.async_get(self.hass)
+            for matter_entry in self.hass.config_entries.async_entries(MATTER_DOMAIN):
+                parent = registry.async_get_device_by_identifier(
+                    identifier, matter_entry.entry_id
+                )
+                if parent is not None:
+                    info["via_device_id"] = parent.id
+                    break
         return info
 
     @property
