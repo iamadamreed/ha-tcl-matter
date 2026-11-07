@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.tcl_matter.const import (
     ATTR_CURRENT_HUMIDITY,
@@ -338,7 +338,7 @@ async def test_write_dedup_per_attribute_independent(
     """Dedup is per-attribute: writing humidity then mode both go through."""
     entity = _make_entity(primed_coordinator, mock_matter_client)
     await entity.async_set_humidity(60)  # different from cached 50 → writes
-    await entity.async_set_mode("continue")  # different from cached 0 → writes
+    await entity.async_set_mode("comfort")  # different from cached 0 → writes
     assert mock_matter_client.write_attribute.await_count == 2
 
 
@@ -410,3 +410,35 @@ async def test_turn_on_failure_raises(
     entity = _make_entity(primed_coordinator, mock_matter_client)
     with pytest.raises(HomeAssistantError):
         await entity.async_turn_on()
+
+
+@pytest.mark.parametrize(
+    ("product_id", "mode", "accepted"),
+    [
+        pytest.param(0x8002, "set", True, id="dfl-set"),
+        pytest.param(0x8002, "comfort", True, id="dfl-comfort"),
+        pytest.param(0x8002, "smart", False, id="dfl-smart-refused"),
+        pytest.param(0x8002, "dry", False, id="dfl-dry-refused"),
+        pytest.param(0x8002, "continue", False, id="dfl-continue-refused"),
+        pytest.param(0x9999, "smart", True, id="other-smart"),
+    ],
+)
+async def test_set_mode_only_accepts_the_products_modes(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+    product_id: int,
+    mode: str,
+    accepted: bool,
+) -> None:
+    """The humidifier service does not validate modes, so the entity must."""
+    mock_matter_client.read_attribute = AsyncMock(return_value={})
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    if accepted:
+        await entity.async_set_mode(mode)
+        mock_matter_client.write_attribute.assert_awaited_once()
+        return
+    with pytest.raises(ServiceValidationError) as err:
+        await entity.async_set_mode(mode)
+    assert err.value.translation_key == "mode_not_supported"
+    mock_matter_client.write_attribute.assert_not_called()

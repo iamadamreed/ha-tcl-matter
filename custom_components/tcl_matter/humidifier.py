@@ -17,11 +17,13 @@ from homeassistant.components.humidifier import (
     HumidifierEntity,
     HumidifierEntityFeature,
 )
+from homeassistant.exceptions import ServiceValidationError
 
 from .const import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_MODE,
     ATTR_TARGET_HUMIDITY,
+    DOMAIN,
     MODE_NAME_MAP,
     MODE_VALUE_MAP,
     ONOFF_ATTR_ON_OFF,
@@ -139,7 +141,12 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
 
     async def async_set_mode(self, mode: str) -> None:
         """Write the operating mode attribute on the device."""
-        # HA validates ``mode`` against available_modes before calling this.
+        if mode not in self.available_modes:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="mode_not_supported",
+                translation_placeholders={"mode": mode},
+            )
         await self.coordinator.async_write_attribute(
             self._node_id, ATTR_MODE, MODE_NAME_MAP[mode]
         )

@@ -71,6 +71,9 @@
     },
     "command_failed": {
       "message": "The {command} command to the dehumidifier failed: {error}"
+    },
+    "mode_not_supported": {
+      "message": "The mode {mode} is not supported by this dehumidifier."
     }
   }
 }
