@@ -21,7 +21,7 @@ Entity names below are shown as they appear in the UI; entity IDs are generated 
 - 🧼 **Filter** (`binary_sensor`) — filter-clean alert (attribute 4 of the vendor cluster)
 - 🔄 **Reset filter** (`button`) — clears the filter alert by writing `False` to that attribute. The unit has no Matter command for it; it beeps when the alert is cleared (verified on hardware). If the alert is already clear the button sends nothing, so it stays silent: a beep means a reset happened
 - ⚠️ **Error codes** (`sensor`, diagnostic) — known codes: **5 = water bucket full**
-- 🎛️ **Mode** (`select`) — direct mode control (Set / Continue / Comfort / Smart / Dry)
+- 🎛️ **Mode** (`select`) — Set or Comfort on the DFL-series units (product ID `0x8002`: T50DC9SPB, H50D44W). The unit accepts the other three values but falls back to Comfort a few seconds later, and its control panel has no such modes (TCL's DFL-Series manual: "Continuous" is the lowest humidity setting, not a mode). Products not listed in `PRODUCT_MODES` offer all five (Set / Continue / Comfort / Smart / Dry).
 - 🔗 The device is linked to the built-in Matter device ("connected via"). HA 2026 keeps one device per integration, so the two cannot be merged into one card
 
 ## Requirements

@@ -89,17 +89,59 @@ def test_current_humidity_handles_unparseable(
     assert entity.current_humidity is None
 
 
-@pytest.mark.parametrize(("raw", "expected"), list(MODE_VALUE_MAP.items()))
+DFL_PRODUCT_ID = 0x8002
+OTHER_PRODUCT_ID = 0x9999
+
+
+@pytest.mark.parametrize(
+    ("product_id", "raw", "expected"),
+    [
+        *[
+            pytest.param(OTHER_PRODUCT_ID, raw, name, id=f"other-{name}")
+            for raw, name in MODE_VALUE_MAP.items()
+        ],
+        pytest.param(DFL_PRODUCT_ID, 0, "set", id="dfl-set"),
+        pytest.param(DFL_PRODUCT_ID, 2, "comfort", id="dfl-comfort"),
+        pytest.param(DFL_PRODUCT_ID, 1, None, id="dfl-continue-unsupported"),
+        pytest.param(DFL_PRODUCT_ID, 3, None, id="dfl-smart-unsupported"),
+        pytest.param(DFL_PRODUCT_ID, 4, None, id="dfl-dry-unsupported"),
+    ],
+)
 def test_mode_maps_via_value_map(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
+    product_id: int,
     raw: int,
-    expected: str,
+    expected: str | None,
 ) -> None:
-    """Every integer in MODE_VALUE_MAP maps to the right mode string."""
+    """A product only reports the modes it supports; others read as unknown."""
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
     primed_coordinator.data[NODE_ID][ATTR_MODE] = raw
     entity = _make_entity(primed_coordinator, mock_matter_client)
     assert entity.mode == expected
+
+
+@pytest.mark.parametrize(
+    ("product_id", "expected"),
+    [
+        pytest.param(DFL_PRODUCT_ID, ["set", "comfort"], id="dfl"),
+        pytest.param(
+            OTHER_PRODUCT_ID,
+            ["set", "continue", "comfort", "smart", "dry"],
+            id="other",
+        ),
+    ],
+)
+def test_available_modes_follow_the_product(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+    product_id: int,
+    expected: list[str],
+) -> None:
+    """The DFL-series product offers Set and Comfort; unknown products keep all five."""
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    assert entity.available_modes == expected
 
 
 def test_mode_returns_none_for_unknown_int(

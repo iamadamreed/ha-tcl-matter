@@ -65,6 +65,17 @@ MODE_NAME_MAP: Final[dict[str, int]] = {v: k for k, v in MODE_VALUE_MAP.items()}
 
 AVAILABLE_MODES: Final[list[str]] = list(MODE_VALUE_MAP.values())
 
+# Modes a product really has. The attribute accepts every value in
+# MODE_VALUE_MAP, but a unit without a mode takes the write and then falls back
+# to Comfort a few seconds later. Product ID 0x8002 is the DFL-series 50 pint
+# units (T50DC9SPB, H50D44W; TCL's DFL-Series manual lists both). The manual's
+# control panel has only a settable humidity (Set) and Comfort; "Continuous" is
+# the lowest humidity setting, not a mode. Verified on a T50DC9SPB: Set and
+# Comfort hold, Continue, Smart and Dry revert. Unlisted products keep all five.
+PRODUCT_MODES: Final[dict[int, tuple[str, ...]]] = {
+    0x8002: (MODE_SET, MODE_COMFORT),
+}
+
 # Standard OnOff cluster, which carries the unit's power state.
 ONOFF_ENDPOINT: Final = 1
 ONOFF_CLUSTER: Final = 0x0006

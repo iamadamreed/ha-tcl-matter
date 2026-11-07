@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from custom_components.tcl_matter.const import MODE_VALUE_MAP
@@ -10,6 +12,7 @@ from custom_components.tcl_matter.helpers import (
     coerce_int,
     mode_name,
     parse_json_list,
+    supported_modes,
 )
 
 
@@ -81,3 +84,30 @@ def test_mode_name_maps_known_values(raw: int, expected: str) -> None:
 def test_mode_name_unknown_is_none(raw: object) -> None:
     """Unknown or unparseable modes map to None."""
     assert mode_name(raw) is None
+
+
+@pytest.mark.parametrize(
+    ("product_id", "expected"),
+    [
+        (0x8002, ["set", "comfort"]),
+        (0x9999, ["set", "continue", "comfort", "smart", "dry"]),
+        (None, ["set", "continue", "comfort", "smart", "dry"]),
+    ],
+)
+def test_supported_modes_by_product(
+    product_id: int | None, expected: list[str]
+) -> None:
+    """Known products list their modes; unknown or missing IDs keep all five."""
+    node = SimpleNamespace(device_info=SimpleNamespace(productID=product_id))
+    assert supported_modes(node) == expected
+
+
+def test_supported_modes_without_device_info() -> None:
+    """A node with no BasicInformation keeps all five modes."""
+    assert supported_modes(SimpleNamespace(device_info=None)) == [
+        "set",
+        "continue",
+        "comfort",
+        "smart",
+        "dry",
+    ]

@@ -22,7 +22,6 @@ from .const import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_MODE,
     ATTR_TARGET_HUMIDITY,
-    AVAILABLE_MODES,
     MAX_HUMIDITY,
     MIN_HUMIDITY,
     MODE_NAME_MAP,
@@ -32,7 +31,7 @@ from .const import (
     ONOFF_ENDPOINT,
 )
 from .entity import TclMatterEntity
-from .helpers import coerce_int, mode_name
+from .helpers import coerce_int, mode_name, supported_modes
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -67,7 +66,7 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
     def __init__(self, coordinator: TclMatterCoordinator, node_id: int) -> None:
         """Initialize the dehumidifier entity."""
         super().__init__(coordinator, node_id, "dehumidifier")
-        self._attr_available_modes = list(AVAILABLE_MODES)
+        self._attr_available_modes = supported_modes(coordinator.get_node(node_id))
 
     @property
     def is_on(self) -> bool:
@@ -118,7 +117,8 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
     @property
     def mode(self) -> str | None:
         """Return the active operating mode."""
-        return mode_name(self._node_data.get(ATTR_MODE))
+        mode = mode_name(self._node_data.get(ATTR_MODE))
+        return mode if mode in self._attr_available_modes else None
 
     async def async_set_humidity(self, humidity: int) -> None:
         """Write the target humidity attribute on the device."""

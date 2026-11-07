@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .const import LOGGER, MODE_VALUE_MAP
+from .const import AVAILABLE_MODES, LOGGER, MODE_VALUE_MAP, PRODUCT_MODES
 
 
 def coerce_bool(value: object) -> bool | None:
@@ -62,3 +62,11 @@ def mode_name(raw: object) -> str | None:
     """Map the device's integer mode to its name, or None if unknown."""
     number = coerce_int(raw)
     return MODE_VALUE_MAP.get(number) if number is not None else None
+
+
+def supported_modes(node: Any) -> list[str]:
+    """Return the modes this node's product supports, from its product ID."""
+    product_id = coerce_int(
+        getattr(getattr(node, "device_info", None), "productID", None)
+    )
+    return list(PRODUCT_MODES.get(product_id, AVAILABLE_MODES))

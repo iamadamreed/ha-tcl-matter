@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.select import SelectEntity
 
-from .const import ATTR_MODE, AVAILABLE_MODES, MODE_NAME_MAP
+from .const import ATTR_MODE, MODE_NAME_MAP
 from .entity import TclMatterEntity
-from .helpers import mode_name
+from .helpers import mode_name, supported_modes
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -43,7 +43,7 @@ class TclModeSelect(TclMatterEntity, SelectEntity):
     def __init__(self, coordinator: TclMatterCoordinator, node_id: int) -> None:
         """Initialize the mode selector."""
         super().__init__(coordinator, node_id, "mode")
-        self._attr_options = list(AVAILABLE_MODES)
+        self._attr_options = supported_modes(coordinator.get_node(node_id))
 
     @property
     def current_option(self) -> str | None:

@@ -403,3 +403,18 @@ async def test_migration_survives_both_identifiers_existing(
     )
     assert kept.id == old.id
     assert kept.area_id == "attic"
+
+
+async def test_real_node_offers_only_the_modes_its_product_has(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    matter_entry: MockConfigEntry,
+) -> None:
+    """The product ID comes from the real node's BasicInformation (0x8002)."""
+    await _setup(hass, mock_tcl_entry)
+    humidifier = hass.states.get(
+        _entity(hass, "humidifier", "tcl_matter_5_dehumidifier")
+    )
+    mode_select = hass.states.get(_entity(hass, "select", "tcl_matter_5_mode"))
+    assert humidifier.attributes["available_modes"] == ["set", "comfort"]
+    assert mode_select.attributes["options"] == ["set", "comfort"]
