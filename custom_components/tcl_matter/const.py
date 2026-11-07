@@ -30,7 +30,12 @@ ATTR_BUCKET_FULL: Final = 3  # bool — dedicated water-bucket flag.
 # DEAD on H50D44W: empirically verified 2026-05-11 to stay False even when the
 # bucket is full. Kept as a defensive read in case TCL wires it up on a future
 # model or firmware. Real bucket-full signal is code 5 in ATTR_ERROR_CODES.
-ATTR_LOCK_OR_FILTER: Final = 4  # bool — child lock or filter alert (TBD)
+# bool — the pump setting (on pump models). Verified on a T50DC9SPB (product ID
+# 0x8002): pressing the Pump button on the panel flips it, and writing it moves
+# the pump light, with the same beep as the button. Earlier versions called it
+# a filter alert, which was wrong: the DFL-series manual has no filter
+# indicator at all.
+ATTR_PUMP: Final = 4
 ATTR_ERROR_CODES: Final = 5  # string — JSON-encoded list, e.g. "[]" or "[5]"
 ATTR_FEATURE_SET: Final = 6  # string — JSON-encoded list, e.g. "[3]"
 
@@ -62,24 +67,54 @@ MODE_NAME_MAP: Final[dict[str, int]] = {v: k for k, v in MODE_VALUE_MAP.items()}
 
 AVAILABLE_MODES: Final[list[str]] = list(MODE_VALUE_MAP.values())
 
-# Humidity bounds (typical range for residential dehumidifiers; verify on device)
+# The feature set (attribute 6) is a JSON list. Value 1 appears on pump models
+# only: T50DC9SPB (with pump) reports [1,3], H50D44W (no pump) reports [3].
+# Inferred from those two units, not documented by TCL.
+FEATURE_PUMP: Final = 1
+
+# Modes a product really has. The attribute accepts every value in
+# MODE_VALUE_MAP, but a unit without a mode takes the write and then falls back
+# to Comfort a few seconds later. Product ID 0x8002 is the DFL-series 50 pint
+# units (T50DC9SPB, H50D44W; TCL's DFL-Series manual lists both). The manual's
+# control panel has only a settable humidity (Set) and Comfort; "Continuous" is
+# the lowest humidity setting, not a mode. Verified on a T50DC9SPB: Set and
+# Comfort hold, Continue, Smart and Dry revert. Unlisted products keep all five.
+PRODUCT_MODES: Final[dict[int, tuple[str, ...]]] = {
+    0x8002: (MODE_SET, MODE_COMFORT),
+}
+
+# Standard OnOff cluster, which carries the unit's power state.
+ONOFF_ENDPOINT: Final = 1
+ONOFF_CLUSTER: Final = 0x0006
+ONOFF_ATTR_ON_OFF: Final = 0
+
+# Default humidity bounds, for products not listed in PRODUCT_HUMIDITY.
 MIN_HUMIDITY: Final = 35
 MAX_HUMIDITY: Final = 85
+DEFAULT_HUMIDITY_STEP: Final = 1
 
-# Fallback poll interval when push subscription is unavailable
-POLL_INTERVAL_SECONDS: Final = 30
+# (min, max, step) of the target humidity a product really accepts. Verified on
+# a T50DC9SPB in Set mode: only multiples of 5 from 35 to 80 stick (35, 40, ...,
+# 80). Any other value, including 85, is accepted by the write and then put
+# back to the previous value within about a second. The DFL-series manual
+# gives the panel the same 35 to 80 range.
+PRODUCT_HUMIDITY: Final[dict[int, tuple[int, int, int]]] = {
+    0x8002: (35, 80, 5),
+}
+
+# Safety-net poll interval. Push updates (see __init__) normally arrive first.
+POLL_INTERVAL_SECONDS: Final = 60
+
+# Timeouts for matter-server round trips (seconds).
+READ_TIMEOUT_SECONDS: Final = 10
+WRITE_TIMEOUT_SECONDS: Final = 15
+
+# Consecutive failed polls before a node's entities go unavailable.
+UNAVAILABLE_AFTER_FAILURES: Final = 2
 
 # Matter integration domain (built-in)
 MATTER_DOMAIN: Final = "matter"
 
-# Standard Matter cluster + attribute IDs we read directly
-BASIC_INFORMATION_CLUSTER: Final = 0x0028
-BASIC_INFORMATION_VENDOR_ID_ATTR: Final = 2
-
 # Number of TCL_CLUSTER_FC03 data attributes (0..6) we surface as entities.
 # Cluster metadata attributes (>=0xFFF8) are intentionally skipped.
 NUM_TCL_FC03_DATA_ATTRS: Final = 7
-
-# Path-string format used by the matter-server to identify attribute tuples.
-# "endpoint/cluster/attr" — three integer fields separated by slashes.
-ATTR_PATH_PARTS: Final = 3

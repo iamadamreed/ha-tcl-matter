@@ -1,26 +1,15 @@
 """
 Humidifier platform for TCL Matter dehumidifiers.
 
-Exposes a single :class:`TclDehumidifier` per discovered TCL node. The
-target humidity (attr 1) and operating mode (attr 0) are written back to
-the device through ``matter_ws.live_write_attribute``, which talks to the
-matter-server WebSocket directly so the vendor cluster decoder (matter-js
-PR #630 / iamadamreed/addons fork) handles the wire format.
-
-Two safety measures live in this module to prevent runaway write loops:
-
-* **Per-attribute :class:`asyncio.Lock`** — serialises concurrent writes
-  to the same attribute, so a tampered + auto-restore double-fire cannot
-  interleave.
-* **Write deduplication** — under the lock, compares the requested value
-  to the cached value and skips the round trip when they match. Breaks
-  the flap loop that would otherwise occur if a stale push event re-
-  triggered an automation that wrote the same value back.
+Exposes one :class:`TclDehumidifier` per TCL node. Target humidity (attr 1) and
+operating mode (attr 0) are written through
+:meth:`TclMatterCoordinator.async_write_attribute`, which serialises writes per
+attribute and skips a write the device already holds. Power is the standard
+OnOff cluster (0x0006) on endpoint 1.
 """
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.humidifier import (
@@ -28,27 +17,34 @@ from homeassistant.components.humidifier import (
     HumidifierEntity,
     HumidifierEntityFeature,
 )
+from homeassistant.exceptions import ServiceValidationError
 
 from .const import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_MODE,
     ATTR_TARGET_HUMIDITY,
-    AVAILABLE_MODES,
-    LOGGER,
-    MAX_HUMIDITY,
-    MIN_HUMIDITY,
+    DOMAIN,
     MODE_NAME_MAP,
     MODE_VALUE_MAP,
-    TCL_CLUSTER_FC03,
+    ONOFF_ATTR_ON_OFF,
+    ONOFF_CLUSTER,
+    ONOFF_ENDPOINT,
 )
 from .entity import TclMatterEntity
-from .matter_ws import live_write_attribute
+from .helpers import (
+    coerce_int,
+    humidity_limits,
+    mode_name,
+    snap_humidity,
+    supported_modes,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import TclMatterConfigEntry
+    from .coordinator import TclMatterCoordinator
 
 
 async def async_setup_entry(
@@ -58,141 +54,99 @@ async def async_setup_entry(
 ) -> None:
     """Set up dehumidifier entities for every TCL node."""
     runtime = entry.runtime_data
-    entities = [
-        TclDehumidifier(runtime.coordinator, runtime.matter_client, node_id)
-        for node_id in runtime.devices
-    ]
-    async_add_entities(entities)
+    async_add_entities(
+        TclDehumidifier(runtime.coordinator, node_id) for node_id in runtime.devices
+    )
 
 
 class TclDehumidifier(TclMatterEntity, HumidifierEntity):
     """Dehumidifier entity backed by TCL vendor cluster 0x1334FC03."""
 
     _attr_device_class = HumidifierDeviceClass.DEHUMIDIFIER
-    _attr_min_humidity = MIN_HUMIDITY
-    _attr_max_humidity = MAX_HUMIDITY
     _attr_supported_features = HumidifierEntityFeature.MODES
-    _attr_available_modes = AVAILABLE_MODES
     _attr_translation_key = "tcl_dehumidifier"
     _attr_name = None  # use device name
 
-    def __init__(
-        self,
-        coordinator: Any,
-        matter_client: Any,
-        node_id: int,
-    ) -> None:
+    def __init__(self, coordinator: TclMatterCoordinator, node_id: int) -> None:
         """Initialize the dehumidifier entity."""
         super().__init__(coordinator, node_id, "dehumidifier")
-        self._matter_client = matter_client
-        # One lock per attribute id; created lazily so we don't carry empty
-        # lock objects for attrs we never write.
-        self._write_locks: dict[int, asyncio.Lock] = {}
+        node = coordinator.get_node(node_id)
+        self._attr_available_modes = supported_modes(node)
+        self._limits = humidity_limits(node)
+        (
+            self._attr_min_humidity,
+            self._attr_max_humidity,
+            self._attr_target_humidity_step,
+        ) = self._limits
 
     @property
     def is_on(self) -> bool:
         """
-        Return True if the unit appears to be running.
+        Return True if the unit is powered on.
 
-        TCL exposes power as a separate OnOff cluster on the same node.
-        Until we wire that in, we treat the device as on whenever its
-        mode attribute reports a known value.
-
-        TODO(empirical): bind to the OnOff cluster (0x0006) on endpoint 1
-        once the matter client lets us read it cheaply.
+        Power is the OnOff cluster, which the matter integration keeps current
+        and pushes to this entity through the OnOff subscription. If it can't
+        be read, fall back to treating the unit as on while its mode attribute
+        is a known value.
         """
-        mode_value = self._node_data.get(ATTR_MODE)
-        return mode_value in MODE_VALUE_MAP
+        node = self.coordinator.get_node(self._node_id)
+        try:
+            on_off = node.get_attribute_value(
+                ONOFF_ENDPOINT, ONOFF_CLUSTER, ONOFF_ATTR_ON_OFF
+            )
+        # A node without endpoint 1 or the OnOff cluster raises KeyError.
+        except AttributeError, KeyError:
+            on_off = None
+        if isinstance(on_off, bool):
+            return on_off
+        return self._node_data.get(ATTR_MODE) in MODE_VALUE_MAP
+
+    async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Turn the unit on."""
+        await self._send_on_off("On")
+
+    async def async_turn_off(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Turn the unit off."""
+        await self._send_on_off("Off")
+
+    async def _send_on_off(self, command_name: str) -> None:
+        """Send an OnOff cluster command through the coordinator."""
+        await self.coordinator.async_send_command(
+            self._node_id, ONOFF_ENDPOINT, ONOFF_CLUSTER, command_name
+        )
 
     @property
     def target_humidity(self) -> int | None:
         """Return the configured target humidity (RH %)."""
-        value = self._node_data.get(ATTR_TARGET_HUMIDITY)
-        try:
-            return int(value) if value is not None else None
-        except TypeError, ValueError:
-            return None
+        return coerce_int(self._node_data.get(ATTR_TARGET_HUMIDITY))
 
     @property
     def current_humidity(self) -> int | None:
         """Return the device's measured ambient humidity (RH %)."""
-        value = self._node_data.get(ATTR_CURRENT_HUMIDITY)
-        try:
-            return int(value) if value is not None else None
-        except TypeError, ValueError:
-            return None
+        return coerce_int(self._node_data.get(ATTR_CURRENT_HUMIDITY))
 
     @property
     def mode(self) -> str | None:
         """Return the active operating mode."""
-        raw = self._node_data.get(ATTR_MODE)
-        if raw is None:
-            return None
-        try:
-            return MODE_VALUE_MAP.get(int(raw))
-        except TypeError, ValueError:
-            return None
+        mode = mode_name(self._node_data.get(ATTR_MODE))
+        return mode if mode in self._attr_available_modes else None
 
     async def async_set_humidity(self, humidity: int) -> None:
         """Write the target humidity attribute on the device."""
-        clamped = max(MIN_HUMIDITY, min(MAX_HUMIDITY, int(humidity)))
-        await self._write_attr(ATTR_TARGET_HUMIDITY, clamped)
+        await self.coordinator.async_write_attribute(
+            self._node_id,
+            ATTR_TARGET_HUMIDITY,
+            snap_humidity(humidity, self._limits),
+        )
 
     async def async_set_mode(self, mode: str) -> None:
         """Write the operating mode attribute on the device."""
-        if mode not in MODE_NAME_MAP:
-            LOGGER.warning("Unknown TCL mode requested: %s", mode)
-            return
-        await self._write_attr(ATTR_MODE, MODE_NAME_MAP[mode])
-
-    def _lock_for(self, attr_id: int) -> asyncio.Lock:
-        """Return (lazily-created) write lock for ``attr_id``."""
-        lock = self._write_locks.get(attr_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._write_locks[attr_id] = lock
-        return lock
-
-    async def _write_attr(self, attr_id: int, value: Any) -> None:
-        """
-        Write a TCL vendor cluster attribute on the device.
-
-        Acquires the per-attribute lock, dedupes against the cached value,
-        then issues a live write through the matter-server WebSocket. On
-        success, the local cache is optimistically updated so the UI
-        reflects the change without waiting for the next poll/push.
-        """
-        path = f"1/{TCL_CLUSTER_FC03}/{attr_id}"
-        async with self._lock_for(attr_id):
-            current = self._node_data.get(attr_id)
-            if current == value:
-                LOGGER.debug(
-                    "write dedup: node=%s attr=%s already %r — skipping",
-                    self._node_id,
-                    attr_id,
-                    value,
-                )
-                return
-
-            try:
-                await live_write_attribute(
-                    self._matter_client, self._node_id, path, value
-                )
-            # Defensive: the matter-server raises an open-ended set of
-            # exception types for transport, validation, and device-side
-            # errors. Logging here is the right place; callers shouldn't
-            # have to wrap every set_humidity/set_mode call in try/except.
-            except Exception as err:  # noqa: BLE001
-                LOGGER.error(
-                    "live write failed: node=%s path=%s value=%r err=%s",
-                    self._node_id,
-                    path,
-                    value,
-                    err,
-                )
-                return
-
-            self.coordinator._devices[self._node_id].attributes[attr_id] = value  # noqa: SLF001
-            snapshot = dict(self.coordinator.data or {})
-            snapshot.setdefault(self._node_id, {})[attr_id] = value
-            self.coordinator.async_set_updated_data(snapshot)
+        if mode not in self.available_modes:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="mode_not_supported",
+                translation_placeholders={"mode": mode},
+            )
+        await self.coordinator.async_write_attribute(
+            self._node_id, ATTR_MODE, MODE_NAME_MAP[mode]
+        )

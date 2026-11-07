@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.tcl_matter.const import (
     ATTR_CURRENT_HUMIDITY,
@@ -34,7 +33,7 @@ def _make_entity(
     matter_client: MagicMock,
 ) -> TclDehumidifier:
     """Construct a TclDehumidifier wired to the primed test coordinator."""
-    return TclDehumidifier(primed_coordinator, matter_client, NODE_ID)
+    return TclDehumidifier(primed_coordinator, NODE_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -90,17 +89,59 @@ def test_current_humidity_handles_unparseable(
     assert entity.current_humidity is None
 
 
-@pytest.mark.parametrize(("raw", "expected"), list(MODE_VALUE_MAP.items()))
+DFL_PRODUCT_ID = 0x8002
+OTHER_PRODUCT_ID = 0x9999
+
+
+@pytest.mark.parametrize(
+    ("product_id", "raw", "expected"),
+    [
+        *[
+            pytest.param(OTHER_PRODUCT_ID, raw, name, id=f"other-{name}")
+            for raw, name in MODE_VALUE_MAP.items()
+        ],
+        pytest.param(DFL_PRODUCT_ID, 0, "set", id="dfl-set"),
+        pytest.param(DFL_PRODUCT_ID, 2, "comfort", id="dfl-comfort"),
+        pytest.param(DFL_PRODUCT_ID, 1, None, id="dfl-continue-unsupported"),
+        pytest.param(DFL_PRODUCT_ID, 3, None, id="dfl-smart-unsupported"),
+        pytest.param(DFL_PRODUCT_ID, 4, None, id="dfl-dry-unsupported"),
+    ],
+)
 def test_mode_maps_via_value_map(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
+    product_id: int,
     raw: int,
-    expected: str,
+    expected: str | None,
 ) -> None:
-    """Every integer in MODE_VALUE_MAP maps to the right mode string."""
+    """A product only reports the modes it supports; others read as unknown."""
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
     primed_coordinator.data[NODE_ID][ATTR_MODE] = raw
     entity = _make_entity(primed_coordinator, mock_matter_client)
     assert entity.mode == expected
+
+
+@pytest.mark.parametrize(
+    ("product_id", "expected"),
+    [
+        pytest.param(DFL_PRODUCT_ID, ["set", "comfort"], id="dfl"),
+        pytest.param(
+            OTHER_PRODUCT_ID,
+            ["set", "continue", "comfort", "smart", "dry"],
+            id="other",
+        ),
+    ],
+)
+def test_available_modes_follow_the_product(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+    product_id: int,
+    expected: list[str],
+) -> None:
+    """The DFL-series product offers Set and Comfort; unknown products keep all five."""
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    assert entity.available_modes == expected
 
 
 def test_mode_returns_none_for_unknown_int(
@@ -172,24 +213,56 @@ async def test_async_set_humidity_calls_write_attribute(
     )
 
 
-async def test_async_set_humidity_clamps_low(
+@pytest.mark.parametrize(
+    ("product_id", "requested", "written"),
+    [
+        pytest.param(DFL_PRODUCT_ID, 20, 35, id="dfl-below-range"),
+        pytest.param(DFL_PRODUCT_ID, 99, 80, id="dfl-above-range"),
+        pytest.param(DFL_PRODUCT_ID, 85, 80, id="dfl-85-is-too-high"),
+        pytest.param(DFL_PRODUCT_ID, 52, 50, id="dfl-rounds-down"),
+        pytest.param(DFL_PRODUCT_ID, 53, 55, id="dfl-rounds-up"),
+        pytest.param(DFL_PRODUCT_ID, 60, 60, id="dfl-valid"),
+        pytest.param(OTHER_PRODUCT_ID, 20, MIN_HUMIDITY, id="other-below-range"),
+        pytest.param(OTHER_PRODUCT_ID, 99, MAX_HUMIDITY, id="other-above-range"),
+        pytest.param(OTHER_PRODUCT_ID, 52, 52, id="other-any-value"),
+    ],
+)
+async def test_async_set_humidity_writes_a_value_the_product_accepts(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
+    product_id: int,
+    requested: int,
+    written: int,
 ) -> None:
-    """Values below MIN_HUMIDITY are clamped before writing."""
+    """Targets are clamped and snapped to what the product keeps."""
+    mock_matter_client.read_attribute = AsyncMock(return_value={})
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
     entity = _make_entity(primed_coordinator, mock_matter_client)
-    await entity.async_set_humidity(20)
-    assert mock_matter_client.write_attribute.call_args.kwargs["value"] == MIN_HUMIDITY
+    await entity.async_set_humidity(requested)
+    assert mock_matter_client.write_attribute.call_args.kwargs["value"] == written
 
 
-async def test_async_set_humidity_clamps_high(
+@pytest.mark.parametrize(
+    ("product_id", "limits"),
+    [
+        pytest.param(DFL_PRODUCT_ID, (35, 80, 5), id="dfl"),
+        pytest.param(OTHER_PRODUCT_ID, (MIN_HUMIDITY, MAX_HUMIDITY, 1), id="other"),
+    ],
+)
+def test_humidity_limits_follow_the_product(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
+    product_id: int,
+    limits: tuple[int, int, int],
 ) -> None:
-    """Values above MAX_HUMIDITY are clamped before writing."""
+    """The entity advertises the product's range and step."""
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
     entity = _make_entity(primed_coordinator, mock_matter_client)
-    await entity.async_set_humidity(99)
-    assert mock_matter_client.write_attribute.call_args.kwargs["value"] == MAX_HUMIDITY
+    assert (
+        entity.min_humidity,
+        entity.max_humidity,
+        entity.target_humidity_step,
+    ) == limits
 
 
 async def test_async_set_humidity_updates_local_cache(
@@ -216,35 +289,20 @@ async def test_async_set_mode_writes_int_for_known_mode(
     )
 
 
-async def test_async_set_mode_unknown_logs_warning(
+async def test_write_failure_raises_without_cache_update(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """An unknown mode logs a warning and does not write."""
-    entity = _make_entity(primed_coordinator, mock_matter_client)
-    with caplog.at_level(logging.WARNING, logger="custom_components.tcl_matter"):
-        await entity.async_set_mode("turbo")
-    mock_matter_client.write_attribute.assert_not_called()
-    assert any("Unknown TCL mode" in rec.message for rec in caplog.records)
-
-
-async def test_write_failure_logs_and_returns_without_cache_update(
-    primed_coordinator: TclMatterCoordinator,
-    mock_matter_client: MagicMock,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A failing live write logs at error and leaves the cache untouched."""
+    """A failing live write raises to the caller and leaves the cache untouched."""
     mock_matter_client.write_attribute = AsyncMock(side_effect=RuntimeError("nope"))
     entity = _make_entity(primed_coordinator, mock_matter_client)
     before = primed_coordinator.data[NODE_ID][ATTR_TARGET_HUMIDITY]
 
-    with caplog.at_level(logging.ERROR, logger="custom_components.tcl_matter"):
+    with pytest.raises(HomeAssistantError):
         await entity.async_set_humidity(60)
 
     # Cache must NOT optimistically advance when the device write failed.
     assert primed_coordinator.data[NODE_ID][ATTR_TARGET_HUMIDITY] == before
-    assert any("live write failed" in rec.message for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -280,64 +338,107 @@ async def test_write_dedup_per_attribute_independent(
     """Dedup is per-attribute: writing humidity then mode both go through."""
     entity = _make_entity(primed_coordinator, mock_matter_client)
     await entity.async_set_humidity(60)  # different from cached 50 → writes
-    await entity.async_set_mode("continue")  # different from cached 0 → writes
+    await entity.async_set_mode("comfort")  # different from cached 0 → writes
     assert mock_matter_client.write_attribute.await_count == 2
 
 
-async def test_per_attribute_lock_serialises_concurrent_writes(
+# ---------------------------------------------------------------------------
+# Power: OnOff cluster
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("on_off", "expected"), [(True, True), (False, False)])
+def test_is_on_follows_onoff_cluster(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+    on_off: bool,
+    expected: bool,
+) -> None:
+    """Power state comes from the OnOff cluster when it can be read."""
+    node = primed_coordinator.get_node(NODE_ID)
+    node.node_data.attributes["1/6/0"] = on_off
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    assert entity.is_on is expected
+
+
+def test_is_on_survives_a_failing_node_lookup(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """Two concurrent writes to the same attr must not interleave.
-
-    This is the core anti-loop guarantee: even if multiple automations
-    fire ``set_humidity`` simultaneously, the second one observes the
-    cache update from the first and dedupes (no spurious round-trip).
-    """
-    inflight: list[int] = []
-    max_inflight = 0
-
-    async def _slow_write(**kwargs: Any) -> None:
-        nonlocal max_inflight
-        inflight.append(1)
-        max_inflight = max(max_inflight, len(inflight))
-        await asyncio.sleep(0.01)
-        inflight.pop()
-
-    mock_matter_client.write_attribute = AsyncMock(side_effect=_slow_write)
+    """A node without the OnOff cluster falls back to the mode heuristic."""
+    node = primed_coordinator.get_node(NODE_ID)
+    node.get_attribute_value = MagicMock(side_effect=KeyError(1))
     entity = _make_entity(primed_coordinator, mock_matter_client)
-
-    # Three concurrent writes to attr 1: the first writes 60, the lock
-    # serialises the next two, both of which find cache=60 and dedupe.
-    await asyncio.gather(
-        entity.async_set_humidity(60),
-        entity.async_set_humidity(60),
-        entity.async_set_humidity(60),
-    )
-
-    assert max_inflight == 1  # never overlapped
-    assert mock_matter_client.write_attribute.await_count == 1  # other two deduped
+    assert entity.is_on is True  # mode attribute is a known value
 
 
-async def test_per_attribute_lock_independent_across_attrs(
+async def test_turn_off_sends_onoff_command(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
 ) -> None:
-    """Locks are per-attribute, so set_humidity and set_mode can overlap."""
-    seen: list[str] = []
-
-    async def _write(**kwargs: Any) -> None:
-        # Track the attribute path order to confirm both calls executed.
-        seen.append(kwargs["attribute_path"])
-        await asyncio.sleep(0.005)
-
-    mock_matter_client.write_attribute = AsyncMock(side_effect=_write)
+    """turn_off sends the standard OnOff Off command."""
+    mock_matter_client.send_command = AsyncMock()
     entity = _make_entity(primed_coordinator, mock_matter_client)
-
-    await asyncio.gather(
-        entity.async_set_humidity(60),
-        entity.async_set_mode("continue"),
+    await entity.async_turn_off()
+    mock_matter_client.send_command.assert_awaited_once_with(
+        "device_command",
+        node_id=NODE_ID,
+        endpoint_id=1,
+        cluster_id=6,
+        command_name="Off",
+        payload={},
     )
-    assert EXPECTED_TARGET_PATH in seen
-    assert EXPECTED_MODE_PATH in seen
-    assert mock_matter_client.write_attribute.await_count == 2
+
+
+async def test_turn_on_sends_onoff_command(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+) -> None:
+    """turn_on sends the standard OnOff On command."""
+    mock_matter_client.send_command = AsyncMock()
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    await entity.async_turn_on()
+    assert mock_matter_client.send_command.await_args.kwargs["command_name"] == "On"
+
+
+async def test_turn_on_failure_raises(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+) -> None:
+    """A failed OnOff command raises HomeAssistantError."""
+    mock_matter_client.send_command = AsyncMock(side_effect=RuntimeError("x"))
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    with pytest.raises(HomeAssistantError):
+        await entity.async_turn_on()
+
+
+@pytest.mark.parametrize(
+    ("product_id", "mode", "accepted"),
+    [
+        pytest.param(0x8002, "set", True, id="dfl-set"),
+        pytest.param(0x8002, "comfort", True, id="dfl-comfort"),
+        pytest.param(0x8002, "smart", False, id="dfl-smart-refused"),
+        pytest.param(0x8002, "dry", False, id="dfl-dry-refused"),
+        pytest.param(0x8002, "continue", False, id="dfl-continue-refused"),
+        pytest.param(0x9999, "smart", True, id="other-smart"),
+    ],
+)
+async def test_set_mode_only_accepts_the_products_modes(
+    primed_coordinator: TclMatterCoordinator,
+    mock_matter_client: MagicMock,
+    product_id: int,
+    mode: str,
+    accepted: bool,
+) -> None:
+    """The humidifier service does not validate modes, so the entity must."""
+    mock_matter_client.read_attribute = AsyncMock(return_value={})
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
+    entity = _make_entity(primed_coordinator, mock_matter_client)
+    if accepted:
+        await entity.async_set_mode(mode)
+        mock_matter_client.write_attribute.assert_awaited_once()
+        return
+    with pytest.raises(ServiceValidationError) as err:
+        await entity.async_set_mode(mode)
+    assert err.value.translation_key == "mode_not_supported"
+    mock_matter_client.write_attribute.assert_not_called()

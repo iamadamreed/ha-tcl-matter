@@ -1,57 +1,61 @@
 """
 TCL Matter integration.
 
-Decodes TCL's vendor-specific Matter cluster 0x1334FC03 that the built-in
-matter integration exposes as opaque attributes. This
-component coexists with the built-in matter integration: it reuses the
-same device identifier (("matter", node_id)) so both integrations share
-one device card in the HA UI.
+Decodes TCL's vendor-specific Matter cluster 0x1334FC03, which the built-in
+matter integration exposes only as opaque attributes. It runs alongside the
+matter integration and reads and writes the device through the matter client
+that integration holds. Its devices are linked to the matter integration's
+device with ``via_device_id``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from functools import partial, wraps
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.update_coordinator import UpdateFailed
+from matter_server.common.models import EventType
 
 from .const import (
-    BASIC_INFORMATION_CLUSTER,
-    BASIC_INFORMATION_VENDOR_ID_ATTR,
     LOGGER,
     MATTER_DOMAIN,
+    NUM_TCL_FC03_DATA_ATTRS,
+    ONOFF_ATTR_ON_OFF,
+    ONOFF_CLUSTER,
+    ONOFF_ENDPOINT,
     TCL_CLUSTER_FC03,
     TCL_VENDOR_ID,
 )
 from .coordinator import TclMatterCoordinator
+from .device import (
+    async_migrate_devices,
+    async_remove_obsolete_entities,
+    async_sync_device_info,
+    tcl_device_identifier,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from homeassistant.helpers.device_registry import DeviceEntry
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.HUMIDIFIER,
     Platform.SELECT,
     Platform.SENSOR,
+    Platform.SWITCH,
 ]
 
 
 @dataclass
 class TclDevice:
-    """
-    Per-node runtime container.
-
-    Stores the matter node reference plus the most recent attribute snapshot
-    pulled from cluster 0x1334FC03. The dict is keyed by attribute ID.
-    """
+    """Per-node runtime container: the matter node object."""
 
     node_id: int
     node: Any
-    attributes: dict[int, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -60,261 +64,218 @@ class TclMatterRuntimeData:
 
     coordinator: TclMatterCoordinator
     devices: dict[int, TclDevice]
-    matter_client: Any
-    unsubscribers: list[Callable[[], None]] = field(default_factory=list)
 
 
 type TclMatterConfigEntry = ConfigEntry[TclMatterRuntimeData]
 
 
-def _get_matter_client(hass: HomeAssistant) -> Any | None:
-    """
-    Return the matter client from the loaded matter ConfigEntry, or None.
-
-    The location of the client moved across HA releases. We try the modern
-    ``runtime_data`` path first and fall back to ``hass.data["matter"]``.
-    """
-    matter_entries = hass.config_entries.async_entries(MATTER_DOMAIN)
-    for matter_entry in matter_entries:
-        # Modern HA: ConfigEntry.runtime_data
-        runtime_data = getattr(matter_entry, "runtime_data", None)
-        if runtime_data is not None:
-            adapter = getattr(runtime_data, "adapter", None)
-            if adapter is not None and hasattr(adapter, "matter_client"):
-                return adapter.matter_client
-
-        # Fall back to the legacy hass.data layout used before runtime_data.
-        matter_data = hass.data.get(MATTER_DOMAIN, {})
-        entry_data = matter_data.get(matter_entry.entry_id)
-        if entry_data is not None:
-            adapter = getattr(entry_data, "adapter", None)
-            if adapter is not None and hasattr(adapter, "matter_client"):
-                return adapter.matter_client
-
+def _get_matter(hass: HomeAssistant) -> tuple[ConfigEntry, Any] | None:
+    """Return the loaded matter config entry and its client, or None."""
+    for matter_entry in hass.config_entries.async_loaded_entries(MATTER_DOMAIN):
+        adapter = getattr(getattr(matter_entry, "runtime_data", None), "adapter", None)
+        client = getattr(adapter, "matter_client", None)
+        if client is not None:
+            return matter_entry, client
     return None
 
 
 def _node_vendor_id(node: Any) -> int | None:
-    """
-    Extract the vendor ID from a matter node, tolerating API variants.
-
-    Tries (in order):
-      1. ``node.device_info.vendorID`` — python-matter-server 5.x decoded form
-      2. ``node.get_attribute_value(0, 0x0028, 2)`` — BasicInformation/VendorID
-      3. Direct ``node.vendor_id`` attribute (older versions)
-    """
-    # Path 1: BasicInformation dataclass on the node
-    device_info = getattr(node, "device_info", None)
-    if device_info is not None:
-        for field_name in ("vendorID", "vendor_id", "vendorId"):
-            value = getattr(device_info, field_name, None)
-            if value is not None:
-                try:
-                    return int(value)
-                except TypeError, ValueError:
-                    pass
-
-    # Path 2: get_attribute_value(endpoint, cluster, attribute)
-    get_attr = getattr(node, "get_attribute_value", None)
-    if callable(get_attr):
-        try:
-            value = get_attr(
-                0, BASIC_INFORMATION_CLUSTER, BASIC_INFORMATION_VENDOR_ID_ATTR
-            )
-        # Defensive: matter-server APIs raise inconsistent types across versions.
-        except Exception:  # noqa: BLE001
-            value = None
-        if value is not None:
-            try:
-                return int(value)
-            except TypeError, ValueError:
-                pass
-
-    # Path 3: legacy direct attribute
-    vendor_id = getattr(node, "vendor_id", None)
-    if vendor_id is not None:
-        try:
-            return int(vendor_id)
-        except TypeError, ValueError:
-            pass
-
-    return None
-
-
-def _discover_tcl_nodes(matter_client: Any) -> list[Any]:
-    """Return all TCL-vendor matter nodes known to the matter client."""
-    nodes: list[Any] = []
-    get_nodes = getattr(matter_client, "get_nodes", None)
-    if callable(get_nodes):
-        try:
-            raw_nodes = list(get_nodes())
-        except TypeError:
-            raw_nodes = list(getattr(matter_client, "nodes", {}).values())
-    else:
-        raw_nodes = list(getattr(matter_client, "nodes", {}).values())
-
-    LOGGER.debug(
-        "TCL discovery: matter_client type=%s, %d nodes found",
-        type(matter_client).__name__,
-        len(raw_nodes),
-    )
-    for node in raw_nodes:
-        vid = _node_vendor_id(node)
-        nid = getattr(node, "node_id", None)
-        if vid == TCL_VENDOR_ID:
-            LOGGER.info(
-                "TCL Matter node discovered: node_id=%s vendor_id=0x%04X",
-                nid,
-                vid,
-            )
-            nodes.append(node)
-        else:
-            LOGGER.debug("Skipping non-TCL node node_id=%s vendor_id=%s", nid, vid)
-    return nodes
+    """Return the BasicInformation vendor id of a matter node, if readable."""
+    try:
+        return int(node.device_info.vendorID)
+    # A node whose interview failed has no endpoint 0, which raises KeyError.
+    except AttributeError, KeyError, TypeError, ValueError:
+        return None
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -> bool:
     """
     Set up TCL Matter from a config entry.
 
-    Hard-depends on the matter integration being loaded. Discovers TCL
-    nodes by VendorID, builds a coordinator that polls cluster 0x1334FC03
-    every 30s as a fallback, and subscribes to push attribute updates from
-    the matter client when supported.
+    Depends on the matter integration being loaded. Finds TCL nodes by vendor
+    id, subscribes to pushed attribute updates, and polls as a safety net.
     """
-    matter_client = _get_matter_client(hass)
-    if matter_client is None:
-        LOGGER.debug("Matter integration not yet loaded; deferring TCL Matter setup")
+    found = _get_matter(hass)
+    if found is None:
         msg = "matter integration not loaded"
         raise ConfigEntryNotReady(msg)
+    matter_entry, matter_client = found
 
-    tcl_nodes = _discover_tcl_nodes(matter_client)
-    if not tcl_nodes:
+    devices: dict[int, TclDevice] = {}
+    for node in matter_client.get_nodes():
+        if _node_vendor_id(node) == TCL_VENDOR_ID:
+            devices[node.node_id] = TclDevice(node_id=node.node_id, node=node)
+            LOGGER.info("Discovered TCL Matter node %s", node.node_id)
+    if not devices:
         LOGGER.warning(
             "No TCL Matter devices (VendorID 0x%04X) found on the matter fabric",
             TCL_VENDOR_ID,
         )
 
-    devices: dict[int, TclDevice] = {}
-    for node in tcl_nodes:
-        node_id = int(getattr(node, "node_id", getattr(node, "nodeid", 0)))
-        devices[node_id] = TclDevice(node_id=node_id, node=node)
-        LOGGER.info("Discovered TCL Matter node %s", node_id)
+    async_migrate_devices(hass, entry, matter_client, devices)
+    async_remove_obsolete_entities(hass, devices)
 
-    coordinator = TclMatterCoordinator(
-        hass=hass,
-        matter_client=matter_client,
-        devices=devices,
-    )
+    coordinator = TclMatterCoordinator(hass, entry, matter_client, devices)
+    # Raises ConfigEntryNotReady itself if no node can be read.
+    await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = TclMatterRuntimeData(coordinator=coordinator, devices=devices)
 
-    # Initial attribute snapshot. UpdateFailed is the expected raise path; we
-    # surface it as ConfigEntryNotReady so HA retries instead of leaving
-    # entities permanently unknown.
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except UpdateFailed as err:
-        msg = f"initial TCL attribute read failed: {err}"
-        raise ConfigEntryNotReady(msg) from err
-
-    runtime = TclMatterRuntimeData(
-        coordinator=coordinator,
-        devices=devices,
-        matter_client=matter_client,
-    )
-
-    # Try to attach a push subscription. If the matter client doesn't support
-    # vendor-cluster subscriptions yet, we silently fall back to coordinator
-    # polling — both paths feed the same coordinator.data dict.
-    _attach_push_subscription(matter_client, runtime, coordinator)
-
-    entry.runtime_data = runtime
+    _subscribe(hass, entry, matter_entry, matter_client, coordinator, devices)
+    if matter_entry.state is not ConfigEntryState.LOADED:
+        # The matter integration reloaded while this entry was starting, so the
+        # client above is already dead. Retry with the new one.
+        msg = "matter integration reloaded during setup"
+        raise ConfigEntryNotReady(msg)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
 
 
-@callback
-def _attach_push_subscription(
+def _subscribe(  # noqa: PLR0913, PLR0917
+    hass: HomeAssistant,
+    entry: TclMatterConfigEntry,
+    matter_entry: ConfigEntry,
     matter_client: Any,
-    runtime: TclMatterRuntimeData,
     coordinator: TclMatterCoordinator,
+    devices: dict[int, TclDevice],
 ) -> None:
     """
-    Subscribe to attribute-updated events on the matter client.
+    Register push subscriptions and lifecycle watchers.
 
-    The python-matter-server client exposes ``subscribe_events`` /
-    ``subscribe`` with varying signatures across versions. We attempt the
-    common shapes and degrade gracefully.
+    The matter client calls back with only ``(event, value)``, so each
+    attribute gets its own subscription with the node and attribute bound in.
+    Every subscription is released through ``entry.async_on_unload``.
     """
 
+    def subscribe(callback_fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Subscribe, wrapping the callback so it can never raise into the client."""
+        return matter_client.subscribe_events(_safe(callback_fn), *args, **kwargs)
+
+    for node_id in devices:
+        # Attribute 6 (feature set) is read by the poll but nothing displays it.
+        for attr_id in range(NUM_TCL_FC03_DATA_ATTRS - 1):
+            entry.async_on_unload(
+                subscribe(
+                    partial(coordinator.handle_attribute_update, node_id, attr_id),
+                    EventType.ATTRIBUTE_UPDATED,
+                    node_filter=node_id,
+                    attr_path_filter=f"1/{TCL_CLUSTER_FC03}/{attr_id}",
+                )
+            )
+        # Power state is read from the matter node's own cache; these events
+        # only tell entities to re-render.
+        entry.async_on_unload(
+            subscribe(
+                coordinator.handle_state_change,
+                EventType.ATTRIBUTE_UPDATED,
+                node_filter=node_id,
+                attr_path_filter=(
+                    f"{ONOFF_ENDPOINT}/{ONOFF_CLUSTER}/{ONOFF_ATTR_ON_OFF}"
+                ),
+            )
+        )
+        entry.async_on_unload(
+            subscribe(
+                partial(_on_node_updated, hass, entry, matter_client, coordinator),
+                EventType.NODE_UPDATED,
+                node_filter=node_id,
+            )
+        )
+
     @callback
-    def _on_event(event: Any, data: Any = None) -> None:
-        """Handle a push attribute update from the matter client."""
+    def _reload() -> None:
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+
+    @callback
+    def _on_node_added(_event: Any, node: Any) -> None:
+        if _node_vendor_id(node) == TCL_VENDOR_ID and node.node_id not in devices:
+            LOGGER.info("TCL node %s added; reloading", node.node_id)
+            _reload()
+
+    @callback
+    def _on_node_removed(_event: Any, node_id: Any) -> None:
+        if node_id in devices:
+            LOGGER.info("TCL node %s removed; reloading", node_id)
+            _reload()
+
+    @callback
+    def _on_matter_state_change() -> None:
+        # The matter integration replaces its client when it reloads, which
+        # leaves this entry holding a dead one. Reload to pick up the new one.
+        if matter_entry.state is not ConfigEntryState.LOADED:
+            LOGGER.info("matter integration left the loaded state; reloading")
+            _reload()
+
+    entry.async_on_unload(subscribe(_on_node_added, EventType.NODE_ADDED))
+    entry.async_on_unload(subscribe(_on_node_removed, EventType.NODE_REMOVED))
+    entry.async_on_unload(matter_entry.async_on_state_change(_on_matter_state_change))
+
+
+@callback
+def _on_node_updated(
+    hass: HomeAssistant,
+    entry: TclMatterConfigEntry,
+    matter_client: Any,
+    coordinator: TclMatterCoordinator,
+    _event: Any,
+    node: Any,
+) -> None:
+    """Re-render entities and copy firmware versions after a node update."""
+    coordinator.handle_state_change()
+    async_sync_device_info(hass, entry, matter_client, node)
+
+
+def _safe(callback_fn: Any) -> Any:
+    """
+    Wrap a subscription callback so an exception is logged, not raised.
+
+    The matter client calls subscribers from its own dispatch loop. An
+    exception there is treated as a client failure and makes Home Assistant
+    reload the whole matter integration.
+    """
+
+    @wraps(callback_fn)
+    def _wrapper(*args: Any, **kwargs: Any) -> None:
         try:
-            coordinator.handle_push_event(event, data)
-        # Defensive: a broken push payload should never crash the listener.
+            callback_fn(*args, **kwargs)
+        # Defensive: nothing here may propagate into the matter client.
         except Exception:  # noqa: BLE001
-            LOGGER.exception("Error handling matter push event")
+            LOGGER.exception("Error handling a matter event")
 
-    # Try modern signature: subscribe_events(callback, event_filter=...)
-    subscribe_events = getattr(matter_client, "subscribe_events", None)
-    if callable(subscribe_events):
-        try:
-            unsub = subscribe_events(_on_event)
-            if callable(unsub):
-                runtime.unsubscribers.append(unsub)
-                LOGGER.debug("Attached matter_client.subscribe_events listener")
-                return
-        except TypeError:
-            LOGGER.debug("subscribe_events signature differs; falling through")
-
-    # Try legacy: subscribe(callback)
-    subscribe = getattr(matter_client, "subscribe", None)
-    if callable(subscribe):
-        try:
-            unsub = subscribe(_on_event)
-            if callable(unsub):
-                runtime.unsubscribers.append(unsub)
-                LOGGER.debug("Attached matter_client.subscribe listener")
-                return
-        except TypeError:
-            LOGGER.debug("subscribe signature differs; falling through")
-
-    interval = coordinator.update_interval
-    poll_secs = interval.total_seconds() if interval else 30
-    LOGGER.info(
-        "Matter client does not expose a compatible subscription API; "
-        "TCL Matter will rely on %ds polling",
-        poll_secs,
-    )
+    return _wrapper
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -> bool:
     """Unload a TCL Matter config entry."""
-    runtime = entry.runtime_data
-    for unsub in runtime.unsubscribers:
-        try:
-            unsub()
-        # Defensive: matter-server unsubscribe handlers raise inconsistently.
-        except Exception:  # noqa: BLE001
-            LOGGER.debug("Error unsubscribing matter listener", exc_info=True)
-    runtime.unsubscribers.clear()
-
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
-async def async_reload_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) -> None:
-    """Reload the TCL Matter config entry."""
-    await hass.config_entries.async_reload(entry.entry_id)
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,  # noqa: ARG001
+    entry: TclMatterConfigEntry,
+    device_entry: DeviceEntry,
+) -> bool:
+    """Allow removing a device unless it belongs to a node we currently serve."""
+    runtime = getattr(entry, "runtime_data", None)
+    if runtime is None:
+        return True  # not loaded, so nothing is being served
+    client = runtime.coordinator.matter_client
+    active = {
+        identifier
+        for node_id in runtime.devices
+        for identifier in (
+            tcl_device_identifier(client, node_id),
+            (MATTER_DOMAIN, str(node_id)),
+        )
+    }
+    return not (device_entry.identifiers & active)
 
 
 __all__ = [
-    "TCL_CLUSTER_FC03",
     "TclDevice",
     "TclMatterConfigEntry",
     "TclMatterRuntimeData",
-    "async_reload_entry",
+    "async_remove_config_entry_device",
     "async_setup_entry",
     "async_unload_entry",
 ]

@@ -7,7 +7,7 @@
       }
     },
     "abort": {
-      "already_configured": "TCL Matter is already configured."
+      "matter_not_loaded": "The Matter integration is not set up. Set it up and pair the dehumidifier first, then add TCL Matter."
     }
   },
   "entity": {
@@ -42,13 +42,6 @@
           "off": "Empty",
           "on": "Full"
         }
-      },
-      "filter_alert": {
-        "name": "Filter",
-        "state": {
-          "off": "OK",
-          "on": "Needs attention"
-        }
       }
     },
     "select": {
@@ -62,6 +55,25 @@
           "dry": "Dry"
         }
       }
+    },
+    "switch": {
+      "pump": {
+        "name": "Pump"
+      }
+    }
+  },
+  "exceptions": {
+    "write_failed": {
+      "message": "Writing {path} on the dehumidifier failed: {error}"
+    },
+    "write_rejected": {
+      "message": "The dehumidifier rejected the write to {path} (status {status})"
+    },
+    "command_failed": {
+      "message": "The {command} command to the dehumidifier failed: {error}"
+    },
+    "mode_not_supported": {
+      "message": "The mode {mode} is not supported by this dehumidifier."
     }
   }
 }

@@ -86,7 +86,7 @@ def test_error_code_sensor_returns_none_when_missing(
     primed_coordinator.data[NODE_ID].pop(ATTR_ERROR_CODES)
     sensor = TclErrorCodeSensor(primed_coordinator, NODE_ID)
     assert sensor.native_value is None
-    assert sensor.extra_state_attributes == {"codes": []}
+    assert sensor.extra_state_attributes == {}
 
 
 def test_error_code_sensor_returns_none_for_invalid_json(
@@ -124,3 +124,11 @@ def test_error_code_sensor_unsupported_type(
     primed_coordinator.data[NODE_ID][ATTR_ERROR_CODES] = 12345
     sensor = TclErrorCodeSensor(primed_coordinator, NODE_ID)
     assert sensor.native_value is None
+
+
+def test_error_code_sensor_is_not_a_statistics_measurement(
+    primed_coordinator: TclMatterCoordinator,
+) -> None:
+    """The diagnostic error count is not recorded as long-term statistics."""
+    sensor = TclErrorCodeSensor(primed_coordinator, NODE_ID)
+    assert sensor.state_class is None

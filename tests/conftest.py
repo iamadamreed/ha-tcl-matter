@@ -7,15 +7,21 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.config_entries import ConfigEntryState
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    MockModule,
+    mock_integration,
+)
 
 from custom_components.tcl_matter import TclDevice
 from custom_components.tcl_matter.const import (
     ATTR_BUCKET_FULL,
     ATTR_CURRENT_HUMIDITY,
     ATTR_ERROR_CODES,
-    ATTR_LOCK_OR_FILTER,
+    ATTR_FEATURE_SET,
     ATTR_MODE,
+    ATTR_PUMP,
     ATTR_TARGET_HUMIDITY,
     DOMAIN,
     MATTER_DOMAIN,
@@ -30,6 +36,9 @@ if TYPE_CHECKING:
 
 # Default node id used across the suite.
 DEFAULT_NODE_ID = 5
+
+# Compressed fabric id the fake matter server reports.
+FABRIC_ID = 0x55A6683D17125EED
 
 
 @pytest.fixture(autouse=True)
@@ -48,7 +57,8 @@ def default_node_attributes() -> dict[int, Any]:
         ATTR_TARGET_HUMIDITY: 50,
         ATTR_CURRENT_HUMIDITY: 58,
         ATTR_BUCKET_FULL: False,
-        ATTR_LOCK_OR_FILTER: False,
+        ATTR_PUMP: False,
+        ATTR_FEATURE_SET: "[1,3]",
         ATTR_ERROR_CODES: "[]",
     }
 
@@ -78,6 +88,18 @@ def _make_device_info(
     )
 
 
+def strip_decoded_values(node: Any) -> None:
+    """Make a fake node look like a client that has no decoder for the cluster.
+
+    ``get_attribute_value`` then returns None for every vendor attribute, so
+    the coordinator has to fall back to a live read.
+    """
+    prefix = f"1/{TCL_CLUSTER_FC03}/"
+    node.node_data.attributes = {
+        k: v for k, v in node.node_data.attributes.items() if not k.startswith(prefix)
+    }
+
+
 def _make_node_data(attributes: dict[str, Any]) -> SimpleNamespace:
     """Build a ``node_data`` namespace whose ``.attributes`` is a path-keyed dict."""
     return SimpleNamespace(attributes=dict(attributes))
@@ -93,6 +115,7 @@ def mock_matter_node(default_node_attributes: dict[int, Any]) -> MagicMock:
     """
     node = MagicMock(name="MatterNode")
     node.node_id = DEFAULT_NODE_ID
+    node.available = True
     # Modern path-string node_data dict (the only path the coordinator reads now).
     node_attrs: dict[str, Any] = {
         f"1/{TCL_CLUSTER_FC03}/{attr_id}": value
@@ -114,8 +137,6 @@ def mock_matter_node(default_node_attributes: dict[int, Any]) -> MagicMock:
 
     node.get_attribute_value = MagicMock(side_effect=_get_attr)
 
-    # Legacy direct attribute (still accepted as a tertiary fallback).
-    node.vendor_id = TCL_VENDOR_ID
     return node
 
 
@@ -131,10 +152,10 @@ def non_tcl_matter_node() -> MagicMock:
         vendor_name="OtherCo",
     )
     node.node_data = _make_node_data({"0/40/1": 0x1234})
+    node.available = True
     node.get_attribute_value = MagicMock(
         side_effect=lambda e, c, a: node.node_data.attributes.get(f"{e}/{c}/{a}")
     )
-    node.vendor_id = 0x1234
     return node
 
 
@@ -172,10 +193,33 @@ def mock_matter_client(
     client.read_attribute = AsyncMock(side_effect=_read_attribute)
     client.write_attribute = AsyncMock(side_effect=_write_attribute)
 
-    # subscribe_events returns a no-op unsubscribe callable.
-    unsub = MagicMock(name="UnsubscribeFn")
-    client.subscribe_events = MagicMock(return_value=unsub)
-    client.subscribe = MagicMock(return_value=unsub)
+    client.server_info = SimpleNamespace(compressed_fabric_id=FABRIC_ID)
+
+    # subscribe_events records every subscription so tests can fire events and
+    # check that each one is released.
+    client.subscriptions = []
+
+    def _subscribe_events(
+        callback: Any,
+        event_filter: Any = None,
+        node_filter: int | None = None,
+        attr_path_filter: str | None = None,
+    ) -> Any:
+        record = SimpleNamespace(
+            callback=callback,
+            event_filter=event_filter,
+            node_filter=node_filter,
+            attr_path_filter=attr_path_filter,
+            active=True,
+        )
+
+        def _unsubscribe() -> None:
+            record.active = False
+
+        client.subscriptions.append(record)
+        return _unsubscribe
+
+    client.subscribe_events = MagicMock(side_effect=_subscribe_events)
 
     return client
 
@@ -193,10 +237,11 @@ def mock_matter_entry(
         entry_id="matter_mock_entry",
     )
     entry.add_to_hass(hass)
-    # Mimic the modern HA matter integration: runtime_data.adapter.matter_client
+    # Mimic the HA matter integration: runtime_data.adapter.matter_client
     entry.runtime_data = SimpleNamespace(
         adapter=SimpleNamespace(matter_client=mock_matter_client),
     )
+    entry.mock_state(hass, ConfigEntryState.LOADED)
     return entry
 
 
@@ -215,8 +260,15 @@ def mock_tcl_entry(hass: HomeAssistant) -> MockConfigEntry:
 
 
 @pytest.fixture
-def setup_matter_dependency(mock_matter_entry: MockConfigEntry) -> MockConfigEntry:
-    """Ensure the mocked matter ConfigEntry is registered before TCL setup."""
+def setup_matter_dependency(
+    hass: HomeAssistant, mock_matter_entry: MockConfigEntry
+) -> MockConfigEntry:
+    """Register the mocked matter entry and a stub matter integration.
+
+    The stub keeps HA from setting up the real matter integration (which would
+    try to reach a server) when the TCL entry's dependency is resolved.
+    """
+    mock_integration(hass, MockModule(MATTER_DOMAIN))
     return mock_matter_entry
 
 
@@ -244,16 +296,12 @@ def make_tcl_device() -> Any:
         node.node_id = node_id
         node.node_data = _make_node_data(node_attrs)
         node.device_info = _make_device_info()
-        node.vendor_id = TCL_VENDOR_ID
+        node.available = True
         node.get_attribute_value = MagicMock(
             side_effect=lambda e, c, a: node.node_data.attributes.get(f"{e}/{c}/{a}")
         )
 
-        return TclDevice(
-            node_id=node_id,
-            node=node,
-            attributes=dict(attributes),
-        )
+        return TclDevice(node_id=node_id, node=node)
 
     return _factory
 
@@ -268,6 +316,7 @@ def make_coordinator(
     def _factory(devices: dict[int, Any]) -> Any:
         return TclMatterCoordinator(
             hass=hass,
+            config_entry=None,
             matter_client=mock_matter_client,
             devices=devices,
         )

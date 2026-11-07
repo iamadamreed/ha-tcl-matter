@@ -36,6 +36,7 @@ First Matter→humidifier platform handler. Model after `homeassistant/component
 
 ```python
 """Matter humidifier platform."""
+
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
@@ -56,6 +57,7 @@ from .models import MatterDiscoverySchema
 # Mode int↔str maps mirror TCL app order:
 TCL_MODE_TO_HA = {0: "set", 1: "continue", 2: "comfort", 3: "smart", 4: "dry"}
 TCL_MODE_TO_INT = {v: k for k, v in TCL_MODE_TO_HA.items()}
+
 
 class MatterTclDehumidifier(MatterEntity, HumidifierEntity):
     _attr_device_class = HumidifierDeviceClass.DEHUMIDIFIER
@@ -78,9 +80,7 @@ class MatterTclDehumidifier(MatterEntity, HumidifierEntity):
 
     @property
     def mode(self) -> str | None:
-        raw = self.get_matter_attribute_value(
-            TclDehumidifierCluster.Attributes.Mode
-        )
+        raw = self.get_matter_attribute_value(TclDehumidifierCluster.Attributes.Mode)
         return TCL_MODE_TO_HA.get(raw) if raw is not None else None
 
     @property
@@ -102,6 +102,7 @@ class MatterTclDehumidifier(MatterEntity, HumidifierEntity):
             matter_attribute=TclDehumidifierCluster.Attributes.Mode,
         )
 
+
 DISCOVERY_SCHEMAS = [
     MatterDiscoverySchema(
         platform=Platform.HUMIDIFIER,
@@ -121,6 +122,7 @@ Wire up the new humidifier platform's schemas alongside the existing ones:
 
 ```python
 from .humidifier import DISCOVERY_SCHEMAS as HUMIDIFIER_SCHEMAS
+
 # ...
 DISCOVERY_SCHEMAS: dict[Platform, list[MatterDiscoverySchema]] = {
     # ... existing entries ...
@@ -132,29 +134,33 @@ DISCOVERY_SCHEMAS: dict[Platform, list[MatterDiscoverySchema]] = {
 Append two TCL schemas:
 
 ```python
-MatterDiscoverySchema(
-    platform=Platform.BINARY_SENSOR,
-    entity_description=BinarySensorEntityDescription(
-        key="MatterTclWaterBucketFull",
-        translation_key="water_bucket_full",
-        device_class=BinarySensorDeviceClass.PROBLEM,
+(
+    MatterDiscoverySchema(
+        platform=Platform.BINARY_SENSOR,
+        entity_description=BinarySensorEntityDescription(
+            key="MatterTclWaterBucketFull",
+            translation_key="water_bucket_full",
+            device_class=BinarySensorDeviceClass.PROBLEM,
+        ),
+        entity_class=MatterBinarySensor,
+        required_attributes=(TclDehumidifierCluster.Attributes.WaterBucketFull,),
+        vendor_id=(0x1334,),
     ),
-    entity_class=MatterBinarySensor,
-    required_attributes=(TclDehumidifierCluster.Attributes.WaterBucketFull,),
-    vendor_id=(0x1334,),
-),
-MatterDiscoverySchema(
-    platform=Platform.BINARY_SENSOR,
-    entity_description=BinarySensorEntityDescription(
-        key="MatterTclFilterAlert",
-        translation_key="filter_alert",
-        device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=EntityCategory.DIAGNOSTIC,
+)
+(
+    MatterDiscoverySchema(
+        platform=Platform.BINARY_SENSOR,
+        entity_description=BinarySensorEntityDescription(
+            key="MatterTclFilterAlert",
+            translation_key="filter_alert",
+            device_class=BinarySensorDeviceClass.PROBLEM,
+            entity_category=EntityCategory.DIAGNOSTIC,
+        ),
+        entity_class=MatterBinarySensor,
+        required_attributes=(TclDehumidifierCluster.Attributes.FilterAlert,),
+        vendor_id=(0x1334,),
     ),
-    entity_class=MatterBinarySensor,
-    required_attributes=(TclDehumidifierCluster.Attributes.FilterAlert,),
-    vendor_id=(0x1334,),
-),
+)
 ```
 
 ### 5. `homeassistant/components/matter/select.py`
