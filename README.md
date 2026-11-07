@@ -15,7 +15,7 @@ The dehumidifier-specific data **is** present on the device — just inside TCL'
 
 Entity names below are shown as they appear in the UI; entity IDs are generated from the device name and depend on what your unit is called.
 
-- 💧 **Dehumidifier** (`humidifier`) — target humidity (35–85 %), mode, and on/off from the real power state (Matter OnOff cluster)
+- 💧 **Dehumidifier** (`humidifier`) — target humidity, mode, and on/off from the real power state (Matter OnOff cluster). The target only holds in Set mode (Comfort pins it at 50). On the DFL-series units (product ID `0x8002`) the unit keeps only multiples of 5 from 35 to 80; any other value is accepted and then put back within about a second, so the entity offers 35–80 in steps of 5 and rounds other values. Other products keep 35–85 in steps of 1
 - 📊 **Current humidity** (`sensor`) — ambient RH from the unit's onboard sensor
 - 🪣 **Water bucket** (`binary_sensor`) — alerts when the bucket fills (reads error code 5 on product ID `0x8002`; falls back to the dedicated bool for any firmware that ever wires it up)
 - 🚰 **Pump** (`switch`, pump models only) — the same setting as the Pump button on the panel. With it on, the unit pumps water out through its drain hose once the bucket is almost full. Writing it moves the pump light and the unit beeps, as it does for the button. Pump models are recognised by the feature set containing `1` (`[1,3]` on a T50DC9SPB, `[3]` on a model without a pump); that is inferred from two units, not documented by TCL

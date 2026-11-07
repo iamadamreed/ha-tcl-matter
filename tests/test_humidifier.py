@@ -213,24 +213,56 @@ async def test_async_set_humidity_calls_write_attribute(
     )
 
 
-async def test_async_set_humidity_clamps_low(
+@pytest.mark.parametrize(
+    ("product_id", "requested", "written"),
+    [
+        pytest.param(DFL_PRODUCT_ID, 20, 35, id="dfl-below-range"),
+        pytest.param(DFL_PRODUCT_ID, 99, 80, id="dfl-above-range"),
+        pytest.param(DFL_PRODUCT_ID, 85, 80, id="dfl-85-is-too-high"),
+        pytest.param(DFL_PRODUCT_ID, 52, 50, id="dfl-rounds-down"),
+        pytest.param(DFL_PRODUCT_ID, 53, 55, id="dfl-rounds-up"),
+        pytest.param(DFL_PRODUCT_ID, 60, 60, id="dfl-valid"),
+        pytest.param(OTHER_PRODUCT_ID, 20, MIN_HUMIDITY, id="other-below-range"),
+        pytest.param(OTHER_PRODUCT_ID, 99, MAX_HUMIDITY, id="other-above-range"),
+        pytest.param(OTHER_PRODUCT_ID, 52, 52, id="other-any-value"),
+    ],
+)
+async def test_async_set_humidity_writes_a_value_the_product_accepts(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
+    product_id: int,
+    requested: int,
+    written: int,
 ) -> None:
-    """Values below MIN_HUMIDITY are clamped before writing."""
+    """Targets are clamped and snapped to what the product keeps."""
+    mock_matter_client.read_attribute = AsyncMock(return_value={})
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
     entity = _make_entity(primed_coordinator, mock_matter_client)
-    await entity.async_set_humidity(20)
-    assert mock_matter_client.write_attribute.call_args.kwargs["value"] == MIN_HUMIDITY
+    await entity.async_set_humidity(requested)
+    assert mock_matter_client.write_attribute.call_args.kwargs["value"] == written
 
 
-async def test_async_set_humidity_clamps_high(
+@pytest.mark.parametrize(
+    ("product_id", "limits"),
+    [
+        pytest.param(DFL_PRODUCT_ID, (35, 80, 5), id="dfl"),
+        pytest.param(OTHER_PRODUCT_ID, (MIN_HUMIDITY, MAX_HUMIDITY, 1), id="other"),
+    ],
+)
+def test_humidity_limits_follow_the_product(
     primed_coordinator: TclMatterCoordinator,
     mock_matter_client: MagicMock,
+    product_id: int,
+    limits: tuple[int, int, int],
 ) -> None:
-    """Values above MAX_HUMIDITY are clamped before writing."""
+    """The entity advertises the product's range and step."""
+    primed_coordinator.get_node(NODE_ID).device_info.productID = product_id
     entity = _make_entity(primed_coordinator, mock_matter_client)
-    await entity.async_set_humidity(99)
-    assert mock_matter_client.write_attribute.call_args.kwargs["value"] == MAX_HUMIDITY
+    assert (
+        entity.min_humidity,
+        entity.max_humidity,
+        entity.target_humidity_step,
+    ) == limits
 
 
 async def test_async_set_humidity_updates_local_cache(

@@ -88,9 +88,19 @@ ONOFF_ENDPOINT: Final = 1
 ONOFF_CLUSTER: Final = 0x0006
 ONOFF_ATTR_ON_OFF: Final = 0
 
-# Humidity bounds (typical range for residential dehumidifiers; verify on device)
+# Default humidity bounds, for products not listed in PRODUCT_HUMIDITY.
 MIN_HUMIDITY: Final = 35
 MAX_HUMIDITY: Final = 85
+DEFAULT_HUMIDITY_STEP: Final = 1
+
+# (min, max, step) of the target humidity a product really accepts. Verified on
+# a T50DC9SPB in Set mode: only multiples of 5 from 35 to 80 stick (35, 40, ...,
+# 80). Any other value, including 85, is accepted by the write and then put
+# back to the previous value within about a second. The DFL-series manual
+# gives the panel the same 35 to 80 range.
+PRODUCT_HUMIDITY: Final[dict[int, tuple[int, int, int]]] = {
+    0x8002: (35, 80, 5),
+}
 
 # Safety-net poll interval. Push updates (see __init__) normally arrive first.
 POLL_INTERVAL_SECONDS: Final = 60

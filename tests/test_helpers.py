@@ -11,8 +11,10 @@ from custom_components.tcl_matter.helpers import (
     coerce_bool,
     coerce_int,
     has_pump,
+    humidity_limits,
     mode_name,
     parse_json_list,
+    snap_humidity,
     supported_modes,
 )
 
@@ -128,3 +130,20 @@ def test_supported_modes_without_device_info() -> None:
 def test_has_pump_reads_the_feature_set(feature_set: object, expected: bool) -> None:
     """Value 1 in the feature set marks a pump model."""
     assert has_pump(feature_set) is expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(34, 35), (35, 35), (37, 35), (38, 40), (80, 80), (81, 80), (200, 80), (-5, 35)],
+)
+def test_snap_humidity_for_the_dfl_range(value: float, expected: int) -> None:
+    """Values snap to multiples of 5 within 35 to 80."""
+    assert snap_humidity(value, (35, 80, 5)) == expected
+
+
+def test_humidity_limits_by_product() -> None:
+    """Known products have their own range and step; others keep 35 to 85 by 1."""
+    dfl = SimpleNamespace(device_info=SimpleNamespace(productID=0x8002))
+    other = SimpleNamespace(device_info=SimpleNamespace(productID=0x9999))
+    assert humidity_limits(dfl) == (35, 80, 5)
+    assert humidity_limits(other) == (35, 85, 1)

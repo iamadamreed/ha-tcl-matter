@@ -5,7 +5,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .const import AVAILABLE_MODES, FEATURE_PUMP, LOGGER, MODE_VALUE_MAP, PRODUCT_MODES
+from .const import (
+    AVAILABLE_MODES,
+    DEFAULT_HUMIDITY_STEP,
+    FEATURE_PUMP,
+    LOGGER,
+    MAX_HUMIDITY,
+    MIN_HUMIDITY,
+    MODE_VALUE_MAP,
+    PRODUCT_HUMIDITY,
+    PRODUCT_MODES,
+)
 
 
 def coerce_bool(value: object) -> bool | None:
@@ -75,3 +85,20 @@ def supported_modes(node: Any) -> list[str]:
 def has_pump(feature_set: object) -> bool:
     """Return True if the node's feature set (a JSON list) marks a pump model."""
     return FEATURE_PUMP in (parse_json_list(feature_set) or [])
+
+
+def humidity_limits(node: Any) -> tuple[int, int, int]:
+    """Return (min, max, step) of the target humidity this node's product accepts."""
+    product_id = coerce_int(
+        getattr(getattr(node, "device_info", None), "productID", None)
+    )
+    return PRODUCT_HUMIDITY.get(
+        product_id, (MIN_HUMIDITY, MAX_HUMIDITY, DEFAULT_HUMIDITY_STEP)
+    )
+
+
+def snap_humidity(value: float, limits: tuple[int, int, int]) -> int:
+    """Round a target to the nearest step the product accepts, within its range."""
+    low, high, step = limits
+    snapped = low + round((value - low) / step) * step
+    return max(low, min(high, snapped))

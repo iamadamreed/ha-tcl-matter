@@ -22,8 +22,6 @@ from .const import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_MODE,
     ATTR_TARGET_HUMIDITY,
-    MAX_HUMIDITY,
-    MIN_HUMIDITY,
     MODE_NAME_MAP,
     MODE_VALUE_MAP,
     ONOFF_ATTR_ON_OFF,
@@ -31,7 +29,13 @@ from .const import (
     ONOFF_ENDPOINT,
 )
 from .entity import TclMatterEntity
-from .helpers import coerce_int, mode_name, supported_modes
+from .helpers import (
+    coerce_int,
+    humidity_limits,
+    mode_name,
+    snap_humidity,
+    supported_modes,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -57,8 +61,6 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
     """Dehumidifier entity backed by TCL vendor cluster 0x1334FC03."""
 
     _attr_device_class = HumidifierDeviceClass.DEHUMIDIFIER
-    _attr_min_humidity = MIN_HUMIDITY
-    _attr_max_humidity = MAX_HUMIDITY
     _attr_supported_features = HumidifierEntityFeature.MODES
     _attr_translation_key = "tcl_dehumidifier"
     _attr_name = None  # use device name
@@ -66,7 +68,14 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
     def __init__(self, coordinator: TclMatterCoordinator, node_id: int) -> None:
         """Initialize the dehumidifier entity."""
         super().__init__(coordinator, node_id, "dehumidifier")
-        self._attr_available_modes = supported_modes(coordinator.get_node(node_id))
+        node = coordinator.get_node(node_id)
+        self._attr_available_modes = supported_modes(node)
+        self._limits = humidity_limits(node)
+        (
+            self._attr_min_humidity,
+            self._attr_max_humidity,
+            self._attr_target_humidity_step,
+        ) = self._limits
 
     @property
     def is_on(self) -> bool:
@@ -122,9 +131,10 @@ class TclDehumidifier(TclMatterEntity, HumidifierEntity):
 
     async def async_set_humidity(self, humidity: int) -> None:
         """Write the target humidity attribute on the device."""
-        clamped = max(MIN_HUMIDITY, min(MAX_HUMIDITY, int(humidity)))
         await self.coordinator.async_write_attribute(
-            self._node_id, ATTR_TARGET_HUMIDITY, clamped
+            self._node_id,
+            ATTR_TARGET_HUMIDITY,
+            snap_humidity(humidity, self._limits),
         )
 
     async def async_set_mode(self, mode: str) -> None:
