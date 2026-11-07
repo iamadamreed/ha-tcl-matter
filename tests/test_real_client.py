@@ -77,7 +77,7 @@ def node_data(
             f"1/{C}/3": False,
             f"1/{C}/4": False,
             f"1/{C}/5": "[]",
-            f"1/{C}/6": "[3]",
+            f"1/{C}/6": "[1,3]",
         }
     )
     data.update(attrs or {})
@@ -187,7 +187,7 @@ async def test_push_through_the_clients_own_dispatch(
 ) -> None:
     """Pushes, an OnOff change and a node going offline all reach the entities."""
     await _setup(hass, mock_tcl_entry)
-    alert = _entity(hass, "binary_sensor", "tcl_matter_5_filter_alert")
+    alert = _entity(hass, "switch", "tcl_matter_5_pump")
     humidifier = _entity(hass, "humidifier", "tcl_matter_5_dehumidifier")
     assert hass.states.get(alert).state == "off"
 
@@ -418,3 +418,45 @@ async def test_real_node_offers_only_the_modes_its_product_has(
     mode_select = hass.states.get(_entity(hass, "select", "tcl_matter_5_mode"))
     assert humidifier.attributes["available_modes"] == ["set", "comfort"]
     assert mode_select.attributes["options"] == ["set", "comfort"]
+
+
+async def test_no_pump_switch_on_a_model_without_a_pump(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    setup_matter_dependency: MockConfigEntry,
+) -> None:
+    """A unit whose feature set is [3] (no pump) gets no pump switch."""
+    node = MatterNode(node_data(attrs={f"1/{C}/6": "[3]"}))
+    setup_matter_dependency.runtime_data = SimpleNamespace(
+        adapter=SimpleNamespace(matter_client=real_client([node]))
+    )
+    await _setup(hass, mock_tcl_entry)
+    assert (
+        er.async_get(hass).async_get_entity_id("switch", DOMAIN, "tcl_matter_5_pump")
+        is None
+    )
+
+
+async def test_old_filter_entities_are_removed_on_upgrade(
+    hass: HomeAssistant,
+    mock_tcl_entry: MockConfigEntry,
+    matter_entry: MockConfigEntry,
+) -> None:
+    """The filter sensor and reset button of 0.6.x are cleaned out of the registry."""
+    registry = er.async_get(hass)
+    for platform, suffix in (
+        ("binary_sensor", "filter_alert"),
+        ("button", "reset_filter"),
+    ):
+        registry.async_get_or_create(
+            platform, DOMAIN, f"tcl_matter_5_{suffix}", config_entry=mock_tcl_entry
+        )
+    await _setup(hass, mock_tcl_entry)
+    for platform, suffix in (
+        ("binary_sensor", "filter_alert"),
+        ("button", "reset_filter"),
+    ):
+        assert (
+            registry.async_get_entity_id(platform, DOMAIN, f"tcl_matter_5_{suffix}")
+            is None
+        )

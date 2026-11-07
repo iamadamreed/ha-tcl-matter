@@ -31,17 +31,22 @@ from .const import (
     TCL_VENDOR_ID,
 )
 from .coordinator import TclMatterCoordinator
-from .device import async_migrate_devices, async_sync_device_info, tcl_device_identifier
+from .device import (
+    async_migrate_devices,
+    async_remove_obsolete_entities,
+    async_sync_device_info,
+    tcl_device_identifier,
+)
 
 if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import DeviceEntry
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
-    Platform.BUTTON,
     Platform.HUMIDIFIER,
     Platform.SELECT,
     Platform.SENSOR,
+    Platform.SWITCH,
 ]
 
 
@@ -108,6 +113,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TclMatterConfigEntry) ->
         )
 
     async_migrate_devices(hass, entry, matter_client, devices)
+    async_remove_obsolete_entities(hass, devices)
 
     coordinator = TclMatterCoordinator(hass, entry, matter_client, devices)
     # Raises ConfigEntryNotReady itself if no node can be read.

@@ -19,8 +19,9 @@ from custom_components.tcl_matter.const import (
     ATTR_BUCKET_FULL,
     ATTR_CURRENT_HUMIDITY,
     ATTR_ERROR_CODES,
-    ATTR_FILTER_ALERT,
+    ATTR_FEATURE_SET,
     ATTR_MODE,
+    ATTR_PUMP,
     ATTR_TARGET_HUMIDITY,
     DOMAIN,
     MATTER_DOMAIN,
@@ -56,7 +57,8 @@ def default_node_attributes() -> dict[int, Any]:
         ATTR_TARGET_HUMIDITY: 50,
         ATTR_CURRENT_HUMIDITY: 58,
         ATTR_BUCKET_FULL: False,
-        ATTR_FILTER_ALERT: False,
+        ATTR_PUMP: False,
+        ATTR_FEATURE_SET: "[1,3]",
         ATTR_ERROR_CODES: "[]",
     }
 

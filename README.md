@@ -18,8 +18,7 @@ Entity names below are shown as they appear in the UI; entity IDs are generated 
 - 💧 **Dehumidifier** (`humidifier`) — target humidity (35–85 %), mode, and on/off from the real power state (Matter OnOff cluster)
 - 📊 **Current humidity** (`sensor`) — ambient RH from the unit's onboard sensor
 - 🪣 **Water bucket** (`binary_sensor`) — alerts when the bucket fills (reads error code 5 on product ID `0x8002`; falls back to the dedicated bool for any firmware that ever wires it up)
-- 🧼 **Filter** (`binary_sensor`) — filter-clean alert (attribute 4 of the vendor cluster)
-- 🔄 **Reset filter** (`button`) — clears the filter alert by writing `False` to that attribute. The unit has no Matter command for it; it beeps when the alert is cleared (verified on hardware). If the alert is already clear the button sends nothing, so it stays silent: a beep means a reset happened
+- 🚰 **Pump** (`switch`, pump models only) — the same setting as the Pump button on the panel. With it on, the unit pumps water out through its drain hose once the bucket is almost full. Writing it moves the pump light and the unit beeps, as it does for the button. Pump models are recognised by the feature set containing `1` (`[1,3]` on a T50DC9SPB, `[3]` on a model without a pump); that is inferred from two units, not documented by TCL
 - ⚠️ **Error codes** (`sensor`, diagnostic) — known codes: **5 = water bucket full**
 - 🎛️ **Mode** (`select`) — Set or Comfort on the DFL-series units (product ID `0x8002`: T50DC9SPB, H50D44W). The unit accepts the other three values but falls back to Comfort a few seconds later, and its control panel has no such modes (TCL's DFL-Series manual: "Continuous" is the lowest humidity setting, not a mode). Products not listed in `PRODUCT_MODES` offer all five (Set / Continue / Comfort / Smart / Dry).
 - 🔗 The device is linked to the built-in Matter device ("connected via"). HA 2026 keeps one device per integration, so the two cannot be merged into one card
@@ -56,7 +55,7 @@ This integration **requires the device to already be paired via the built-in Mat
 | Model | Vendor ID | Product ID | Status |
 |---|---|---|---|
 | TCL H50D44W | `0x1334` | `0x8002` | ✅ Verified |
-| TCL T50DC9SPB (50 pint, with pump) | `0x1334` | `0x8002` | ✅ Verified (firmware 1.0, hardware 1; mode, humidity, filter alert and reset button) |
+| TCL T50DC9SPB (50 pint, with pump) | `0x1334` | `0x8002` | ✅ Verified (firmware 1.0, hardware 1; mode, humidity, power and pump) |
 | TCL H50D66KW | `0x1334` | `0x8002` | Likely (same family — please report) |
 
 If you have a different TCL Matter dehumidifier, [open an issue][issue_tracker] with the model + vendor/product IDs.

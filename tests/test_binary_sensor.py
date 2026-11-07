@@ -6,12 +6,10 @@ from typing import TYPE_CHECKING
 
 from custom_components.tcl_matter.binary_sensor import (
     TclBucketFullBinarySensor,
-    TclFilterAlertBinarySensor,
 )
 from custom_components.tcl_matter.const import (
     ATTR_BUCKET_FULL,
     ATTR_ERROR_CODES,
-    ATTR_FILTER_ALERT,
     ERROR_CODE_BUCKET_FULL,
 )
 
@@ -96,31 +94,6 @@ def test_bucket_full_is_false_when_error_codes_unparseable(
 def test_error_code_constant_is_five() -> None:
     """Document the empirical value at the test level."""
     assert ERROR_CODE_BUCKET_FULL == 5
-
-
-def test_filter_alert_default_off(
-    primed_coordinator: TclMatterCoordinator,
-) -> None:
-    """Default snapshot has filter-alert == False."""
-    sensor = TclFilterAlertBinarySensor(primed_coordinator, NODE_ID)
-    assert sensor.is_on is False
-
-
-def test_filter_alert_on(
-    primed_coordinator: TclMatterCoordinator,
-) -> None:
-    """Setting attr 4 to a truthy value flips the alert on."""
-    primed_coordinator.data[NODE_ID][ATTR_FILTER_ALERT] = 1
-    sensor = TclFilterAlertBinarySensor(primed_coordinator, NODE_ID)
-    assert sensor.is_on is True
-
-
-def test_filter_alert_unique_id(
-    primed_coordinator: TclMatterCoordinator,
-) -> None:
-    """Unique id reflects the sensor's role."""
-    sensor = TclFilterAlertBinarySensor(primed_coordinator, NODE_ID)
-    assert sensor.unique_id == f"tcl_matter_{NODE_ID}_filter_alert"
 
 
 def test_bucket_full_unique_id(

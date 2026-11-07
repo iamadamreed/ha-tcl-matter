@@ -14,8 +14,8 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from custom_components.tcl_matter import const
 from custom_components.tcl_matter.const import (
     ATTR_CURRENT_HUMIDITY,
-    ATTR_FILTER_ALERT,
     ATTR_MODE,
+    ATTR_PUMP,
     ATTR_TARGET_HUMIDITY,
     NUM_TCL_FC03_DATA_ATTRS,
     TCL_CLUSTER_FC03,
@@ -82,7 +82,7 @@ def test_data_attribute_range_covers_defined_attributes() -> None:
         const.ATTR_TARGET_HUMIDITY,
         const.ATTR_CURRENT_HUMIDITY,
         const.ATTR_BUCKET_FULL,
-        const.ATTR_FILTER_ALERT,
+        const.ATTR_PUMP,
         const.ATTR_ERROR_CODES,
         const.ATTR_FEATURE_SET,
     }
@@ -259,16 +259,16 @@ async def test_poll_in_flight_does_not_overwrite_a_newer_push(
 
     async def _slow_read(*, node_id: int, attribute_path: str) -> dict[str, Any]:
         await release.wait()
-        return {_path(ATTR_FILTER_ALERT): False}
+        return {_path(ATTR_PUMP): False}
 
     mock_matter_client.read_attribute = AsyncMock(side_effect=_slow_read)
     poll = asyncio.create_task(primed_coordinator.async_refresh())
     await asyncio.sleep(0)
     pushed = True
-    primed_coordinator.handle_attribute_update(NODE_ID, ATTR_FILTER_ALERT, "e", pushed)
+    primed_coordinator.handle_attribute_update(NODE_ID, ATTR_PUMP, "e", pushed)
     release.set()
     await poll
-    assert primed_coordinator.data[NODE_ID][ATTR_FILTER_ALERT] is True
+    assert primed_coordinator.data[NODE_ID][ATTR_PUMP] is True
 
 
 # ---------------------------------------------------------------------------

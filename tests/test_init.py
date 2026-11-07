@@ -18,7 +18,7 @@ from custom_components.tcl_matter import (
     async_remove_config_entry_device,
 )
 from custom_components.tcl_matter.const import (
-    ATTR_FILTER_ALERT,
+    ATTR_PUMP,
     DOMAIN,
     MATTER_DOMAIN,
     NUM_TCL_FC03_DATA_ATTRS,
@@ -47,12 +47,11 @@ MATTER_PARENT_IDENTIFIER = (
 # Every entity unique id the integration creates for one node.
 UNIQUE_IDS = {
     ("binary_sensor", "tcl_matter_5_bucket_full"),
-    ("binary_sensor", "tcl_matter_5_filter_alert"),
-    ("button", "tcl_matter_5_reset_filter"),
     ("humidifier", "tcl_matter_5_dehumidifier"),
     ("select", "tcl_matter_5_mode"),
     ("sensor", "tcl_matter_5_current_humidity"),
     ("sensor", "tcl_matter_5_error_codes"),
+    ("switch", "tcl_matter_5_pump"),
 }
 
 
@@ -207,13 +206,13 @@ async def test_pushed_value_updates_the_entity(
 ) -> None:
     """A real-shaped client callback, (event, value), reaches the entity state."""
     await _setup(hass, mock_tcl_entry)
-    entity_id = _entity_id(hass, "binary_sensor", "tcl_matter_5_filter_alert")
+    entity_id = _entity_id(hass, "switch", "tcl_matter_5_pump")
     assert hass.states.get(entity_id).state == "off"
 
     sub = next(
         s
         for s in mock_matter_client.subscriptions
-        if s.attr_path_filter == f"1/{TCL_CLUSTER_FC03}/{ATTR_FILTER_ALERT}"
+        if s.attr_path_filter == f"1/{TCL_CLUSTER_FC03}/{ATTR_PUMP}"
     )
     pushed_value = True  # the client passes only (event, value)
     sub.callback(EventType.ATTRIBUTE_UPDATED, pushed_value)

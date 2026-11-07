@@ -42,13 +42,6 @@
           "off": "Empty",
           "on": "Full"
         }
-      },
-      "filter_alert": {
-        "name": "Filter",
-        "state": {
-          "off": "OK",
-          "on": "Needs attention"
-        }
       }
     },
     "select": {
@@ -63,9 +56,9 @@
         }
       }
     },
-    "button": {
-      "reset_filter": {
-        "name": "Reset filter"
+    "switch": {
+      "pump": {
+        "name": "Pump"
       }
     }
   },

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .const import AVAILABLE_MODES, LOGGER, MODE_VALUE_MAP, PRODUCT_MODES
+from .const import AVAILABLE_MODES, FEATURE_PUMP, LOGGER, MODE_VALUE_MAP, PRODUCT_MODES
 
 
 def coerce_bool(value: object) -> bool | None:
@@ -70,3 +70,8 @@ def supported_modes(node: Any) -> list[str]:
         getattr(getattr(node, "device_info", None), "productID", None)
     )
     return list(PRODUCT_MODES.get(product_id, AVAILABLE_MODES))
+
+
+def has_pump(feature_set: object) -> bool:
+    """Return True if the node's feature set (a JSON list) marks a pump model."""
+    return FEATURE_PUMP in (parse_json_list(feature_set) or [])

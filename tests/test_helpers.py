@@ -10,6 +10,7 @@ from custom_components.tcl_matter.const import MODE_VALUE_MAP
 from custom_components.tcl_matter.helpers import (
     coerce_bool,
     coerce_int,
+    has_pump,
     mode_name,
     parse_json_list,
     supported_modes,
@@ -111,3 +112,19 @@ def test_supported_modes_without_device_info() -> None:
         "smart",
         "dry",
     ]
+
+
+@pytest.mark.parametrize(
+    ("feature_set", "expected"),
+    [
+        ("[1,3]", True),
+        ("[3]", False),
+        ("[1]", True),
+        ("[]", False),
+        ("garbage", False),
+        (None, False),
+    ],
+)
+def test_has_pump_reads_the_feature_set(feature_set: object, expected: bool) -> None:
+    """Value 1 in the feature set marks a pump model."""
+    assert has_pump(feature_set) is expected

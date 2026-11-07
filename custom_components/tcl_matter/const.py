@@ -30,10 +30,12 @@ ATTR_BUCKET_FULL: Final = 3  # bool — dedicated water-bucket flag.
 # DEAD on H50D44W: empirically verified 2026-05-11 to stay False even when the
 # bucket is full. Kept as a defensive read in case TCL wires it up on a future
 # model or firmware. Real bucket-full signal is code 5 in ATTR_ERROR_CODES.
-# bool — filter-clean alert. Verified on a T50DC9SPB (product ID 0x8002):
-# writing False clears the alert and the unit beeps (it also beeps when True
-# is written). The cluster has no command for it, so a reset is this write.
-ATTR_FILTER_ALERT: Final = 4
+# bool — the pump setting (on pump models). Verified on a T50DC9SPB (product ID
+# 0x8002): pressing the Pump button on the panel flips it, and writing it moves
+# the pump light, with the same beep as the button. Earlier versions called it
+# a filter alert, which was wrong: the DFL-series manual has no filter
+# indicator at all.
+ATTR_PUMP: Final = 4
 ATTR_ERROR_CODES: Final = 5  # string — JSON-encoded list, e.g. "[]" or "[5]"
 ATTR_FEATURE_SET: Final = 6  # string — JSON-encoded list, e.g. "[3]"
 
@@ -64,6 +66,11 @@ MODE_VALUE_MAP: Final[dict[int, str]] = {
 MODE_NAME_MAP: Final[dict[str, int]] = {v: k for k, v in MODE_VALUE_MAP.items()}
 
 AVAILABLE_MODES: Final[list[str]] = list(MODE_VALUE_MAP.values())
+
+# The feature set (attribute 6) is a JSON list. Value 1 appears on pump models
+# only: T50DC9SPB (with pump) reports [1,3], H50D44W (no pump) reports [3].
+# Inferred from those two units, not documented by TCL.
+FEATURE_PUMP: Final = 1
 
 # Modes a product really has. The attribute accepts every value in
 # MODE_VALUE_MAP, but a unit without a mode takes the write and then falls back

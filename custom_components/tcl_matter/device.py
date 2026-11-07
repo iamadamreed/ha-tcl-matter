@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, LOGGER, MATTER_DOMAIN
 
@@ -115,3 +116,27 @@ def async_sync_device_info(
         registry.async_update_device(
             device.id, sw_version=sw_version, hw_version=hw_version
         )
+
+
+@callback
+def async_remove_obsolete_entities(
+    hass: HomeAssistant, node_ids: Iterable[int]
+) -> None:
+    """
+    Remove the filter entities that 0.6.x created.
+
+    Attribute 4 was thought to be a filter alert and was exposed as a "Filter"
+    binary sensor and a "Reset filter" button. It is the pump setting, now a
+    switch, so the old entities would otherwise stay as unavailable leftovers.
+    """
+    registry = er.async_get(hass)
+    for node_id in node_ids:
+        for platform, suffix in (
+            ("binary_sensor", "filter_alert"),
+            ("button", "reset_filter"),
+        ):
+            entity_id = registry.async_get_entity_id(
+                platform, DOMAIN, f"{DOMAIN}_{node_id}_{suffix}"
+            )
+            if entity_id is not None:
+                registry.async_remove(entity_id)

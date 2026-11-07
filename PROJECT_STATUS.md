@@ -4,6 +4,8 @@
 **Property:** 2504 Canyon Bay
 **Owner:** Adam Reed (`iamadamreed`)
 > **Fork note (0.6.0).** The rest of this file describes the upstream project up to v0.4.2 and is kept for history. This fork (`pshanesmith/ha-tcl-matter`) is at 0.6.0: a Reset filter button, one write path with live dedupe and rejected-write handling, per-attribute push subscriptions, automatic reload when the Matter integration reloads or a TCL node is added or removed, per-node availability, fabric-scoped device identifiers with in-place migration, and a poll that reads the values the matter client decodes (client 1.3.0+) with a live-read fallback. 203 tests, 99 % coverage, run against HA 2026.10.4 and matter-python-client 1.4.0 and 1.5.5. Where the text below disagrees (test counts, versions, "stale cache" for clusters with no decoder), this note wins.
+>
+> **Correction (0.7.0).** Attribute 4 of the TCL cluster, called `filterAlert` throughout this file, is the pump setting on pump models (the DFL-series manual has no filter indicator; pressing the panel's Pump button flips it and writing it moves the pump light). Wherever this file says filter alert, read pump. The fork exposes it as a Pump switch, and the mode list for product ID `0x8002` is Set and Comfort only (the unit falls back to Comfort when written any other mode).
 
 **Current release:** [v0.4.2](https://github.com/iamadamreed/ha-tcl-matter/releases/tag/v0.4.2)
 
